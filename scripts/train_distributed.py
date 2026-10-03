@@ -42,6 +42,13 @@ sys.path.insert(0, str(ROOT / "scripts"))
 PORT = 5555
 
 
+def short_gpu(name: str) -> str:
+    """„NVIDIA GeForce RTX 4060 Laptop GPU” → „RTX 4060” (etykieta workera w logach)."""
+    for junk in ("NVIDIA ", "GeForce ", " Laptop GPU", " GPU"):
+        name = name.replace(junk, "")
+    return name.strip() or "?"
+
+
 def beta_schedule(episode: int, total: int, plan: str) -> float:
     """Jak ``train_decoder.beta_schedule`` (kopia: master nie importuje MuJoCo/torch)."""
     return max(0.0, 1.0 - episode / max(1, total // 2)) if plan == "B" else 0.0
@@ -67,6 +74,14 @@ class Master:
         self.pinged: dict[str, str] = {}  # nazwa → GPU, zgłoszenia przed wczytaniem BANC
         self.finished = False
         self.error: str | None = None  # powód przerwania
+
+    def label(self, name: str) -> str:
+        """Etykieta w logu: karta graficzna workera; przy dwóch takich samych kartach + nazwa komputera."""
+        gpu = self.pinged.get(name)
+        if not gpu:
+            return name
+        same = [n for n, g in self.pinged.items() if g == gpu]
+        return gpu if len(same) == 1 else f"{gpu} ({name})"
 
     @property
     def needed(self) -> int:
@@ -118,10 +133,11 @@ class Master:
 
     def handle(self, msg: dict) -> dict:
         name = msg.get("name", "?")
+        who = self.label(name)
         kind = msg["type"]
         if kind == "ping":
-            self.pinged[name] = msg.get("gpu", "?")
-            print(f"[{name}] zgłosił się ({msg.get('gpu', '?')}), {len(self.pinged)}/{self.needed}", flush=True)
+            self.pinged[name] = short_gpu(msg.get("gpu", "?"))
+            print(f"[{self.label(name)}] zgłosił się (komputer {name}), {len(self.pinged)}/{self.needed}", flush=True)
             if self.finished:
                 return self.task(name)
             return {"kind": "pong"}
@@ -134,26 +150,26 @@ class Master:
                 if self.M is None:
                     self.M = np.array(msg["M"])
                 self.M0 = self.M.copy()
-                print(f"[{name}] pierwszy worker, kalibracja: {calib}", flush=True)
+                print(f"[{who}] pierwszy worker, kalibracja: {calib}", flush=True)
             elif calib["yaw_axis_sign"] != self.ref["yaw_axis_sign"]:
-                print(f"[{name}] ODRZUCONY: yaw_axis_sign {calib['yaw_axis_sign']} ≠ {self.ref['yaw_axis_sign']}",
+                print(f"[{who}] ODRZUCONY: yaw_axis_sign {calib['yaw_axis_sign']} ≠ {self.ref['yaw_axis_sign']}",
                       flush=True)
                 return {"kind": "stop", "error": "inny znak osi yaw z kalibracji niż u pierwszego workera"}
             else:
-                print(f"[{name}] dołączył, kalibracja: {calib}", flush=True)
-            self.workers[name] = {"episodes": 0, "since": time.time()}
+                print(f"[{who}] dołączył, kalibracja: {calib}", flush=True)
+            self.workers[name] = {"episodes": 0, "since": time.time(), "gpu": self.pinged.get(name, "?")}
         elif kind == "result" and msg["kind"] == "train":
             self.M += np.array(msg["dM"])
             self.done_episodes += len(msg["metrics"])
             self.workers.setdefault(name, {"episodes": 0})["episodes"] += len(msg["metrics"])
             for m in msg["metrics"]:
-                self.history.append({**m, "worker": name})
-                print(f"ep {m['index']:4d} [{name}]: cel {m['bearing']:+5.0f}° → {m['final_deg']:5.1f}°  "
+                self.history.append({**m, "worker": name, "gpu": self.pinged.get(name, "?")})
+                print(f"ep {m['index']:4d} [{who}]: cel {m['bearing']:+5.0f}° → {m['final_deg']:5.1f}°  "
                       f"beta {m['beta']:.2f}  loss {m['loss']:.4f}  ({self.done_episodes}/{self.args.episodes})",
                       flush=True)
         elif kind == "result" and msg["kind"] == "eval":
             setattr(self, msg["tag"], msg["eval"])
-            show(f"[{name}] {'przed treningiem' if msg['tag'] == 'before' else 'po treningu    '}", msg["eval"])
+            show(f"[{who}] {'przed treningiem' if msg['tag'] == 'before' else 'po treningu    '}", msg["eval"])
             if msg["tag"] == "after":
                 self.save()
                 self.finished = True
@@ -211,8 +227,10 @@ def run_worker(args) -> None:
     from sim.env import summarize
     from train_decoder import Runner, build, sweep_fit
 
-    name = args.name or socket.gethostname()
+    host = args.name or socket.gethostname()  # identyfikator u mastera
     import torch
+
+    name = short_gpu(torch.cuda.get_device_name(0)) if torch.cuda.is_available() else f"CPU {host}"  # etykieta w logu
 
     if torch.cuda.is_available():
         print(f"[{name}] GPU: {torch.cuda.get_device_name(0)} (torch {torch.__version__})", flush=True)
@@ -235,7 +253,7 @@ def run_worker(args) -> None:
             sys.exit(f"[{name}] master {args.host}:{args.port} nie odpowiada od 60 s — przerywam")
 
     # zgłoszenie przed wczytaniem BANC: master od razu wie, czy ten komputer jest osiągalny
-    reply = send({"type": "ping", "name": name, "gpu": gpu})
+    reply = send({"type": "ping", "name": host, "gpu": gpu})
     if reply["kind"] == "stop":
         sys.exit(f"[{name}] master przerwał: {reply.get('error', '')}")
     print(f"[{name}] połączony z masterem {args.host}:{args.port}, ładuję BANC…", flush=True)
@@ -252,19 +270,19 @@ def run_worker(args) -> None:
           f"{ {k: v for k, v in calib.items() if k not in ('ok', 'scene')} }", flush=True)
     runner = Runner(env, bridge, ctrl)
 
-    task = send({"type": "hello", "name": name, "M": dec.M.tolist(),
+    task = send({"type": "hello", "name": host, "M": dec.M.tolist(),
                  "calib": {"yaw_axis_sign": ctrl.yaw_axis_sign, "haltere_gain": ctrl.haltere_gain,
                            "hover_thrust": dec.hover_thrust, "pitch_trim": dec.pitch_trim}})
     while task["kind"] != "stop":
         if task["kind"] == "wait":
             time.sleep(task["seconds"])
-            task = send({"type": "poll", "name": name})
+            task = send({"type": "poll", "name": host})
             continue
         M = np.array(task["M"])
         dec.M = M.copy()
         if task["kind"] == "eval":
             print(f"[{name}] ewaluacja {task['tag']}…", flush=True)
-            task = send({"type": "result", "kind": "eval", "name": name, "tag": task["tag"],
+            task = send({"type": "result", "kind": "eval", "name": host, "tag": task["tag"],
                          "eval": runner.evaluate(args.eval_duration)})
             continue
         metrics = []
@@ -276,7 +294,7 @@ def run_worker(args) -> None:
             metrics.append({**ep, "loss": loss, **m})
             print(f"[{name}] ep {ep['index']}: cel {ep['bearing']:+5.0f}° → {m['final_deg']:5.1f}° "
                   f"({time.perf_counter() - t:.0f} s)", flush=True)
-        task = send({"type": "result", "kind": "train", "name": name,
+        task = send({"type": "result", "kind": "train", "name": host,
                      "dM": (dec.M - M).tolist(), "metrics": metrics})
     print(f"[{name}] koniec{': ' + task['error'] if task.get('error') else ''}", flush=True)
     if task.get("error"):
