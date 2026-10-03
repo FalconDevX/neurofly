@@ -1,7 +1,7 @@
 """Etap 2: przypisuje komórki FlyVis (typ, u, v) neuronom BANC, osobno dla każdej strony.
 
     python scripts/download_banc.py           # meta BANC v888
-    python scripts/fetch_skeletons.py Mi1     # szkielety arkusza referencyjnego
+    python scripts/fetch_skeletons.py Mi1 T4a T4b T4c T4d Mi4 Mi9 Tm3   # ~8 tys. plików
     python scripts/build_flyvis_banc_map.py   # sam dociąga edgelist v3 (~340 MB)
 
 
@@ -9,8 +9,12 @@
    area per Mi1 cell equals one FlyVis column (hexagon with spacing sqrt(3)).
 2. Other types: position = synapse-weighted mean of already-placed partners, iterated.
    Following connectivity (not soma location) handles the optic chiasm.
-3. Orientation: orthogonal Procrustes (rotation or reflection) between FlyVis T4/T5 input
-   offset vectors and the same offsets measured in BANC.
+3. Orientation: orthogonal Procrustes (rotation or reflection) between FlyVis T4 input
+   offset vectors and the same offsets measured in BANC, with T4/Mi4/Mi9/Tm3 positions
+   taken from their own skeletons (projected onto the Mi1 sheet), not from step 2.
+   Bootstrap over T4 cells gives the angle's 95% CI. Right side: +94° (CI ±2°). Left side
+   (6x fewer typed T4): mirrored right-side map across the midline; it agrees with the dorsal
+   rim area (DRA) landmark, while the left T4 data fit points the opposite way (180°).
 4. Per type: optimal 1:1 assignment of BANC neurons to FlyVis hexals, max distance 1 column.
 
 Output: visual_pipeline/flyvis_banc_map.csv (one row per FlyVis cell and side with a BANC match).
@@ -22,7 +26,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from scipy.optimize import linear_sum_assignment
-from scipy.spatial import ConvexHull
+from scipy.spatial import ConvexHull, cKDTree
 from sklearn.manifold import Isomap
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -102,7 +106,162 @@ edges = edges[edges.pre.isin(ids) & edges.post.isin(ids)]
 print(f"BANC: {len(meta)} typed neurons of FlyVis types, {len(edges)} edges among them", flush=True)
 
 
-def map_side(side):
+SKEL_TYPES = {"T4a", "T4b", "T4c", "T4d", "Mi4", "Mi9", "Tm3"}  # fetch_skeletons.py Mi1 + te
+MEDULLA_RADIUS_UM = 4.0  # węzeł szkieletu "w medulli" = blisko węzła kolumny Mi1
+FV_OFFSETS = {t: flyvis_offsets(t) for t in DIRECTIONAL}
+
+
+def _skeleton_nodes(root_id_meta):
+    path = SKEL_DIR / f"{root_id_meta}.swc"
+    return np.loadtxt(path, usecols=(2, 3, 4), ndmin=2) if path.exists() else None
+
+
+def skeleton_sheet_positions(m, mi1, mi1_pos):
+    """Sheet (px, py) of SKEL_TYPES neurons from their own skeleton nodes inside the medulla.
+
+    Each distal Mi1 node is labelled with its Mi1's sheet position; a node of another neuron
+    takes the labels of its nearest Mi1 nodes. T4 dendrites (M10) and Mi4/Mi9/Tm3 arbors are
+    placed by their own anatomy, not by their partners.
+    """
+    pts, lab = [], []
+    for rid, r in mi1.iterrows():
+        xyz = _skeleton_nodes(r.root_id_meta)
+        d = np.linalg.norm(xyz - np.array([r.x, r.y, r.z]) / 1000, axis=1)
+        xyz = xyz[d >= 0.5 * d.max()]
+        pts.append(xyz)
+        lab.append(np.repeat(mi1_pos.loc[[rid]].values, len(xyz), axis=0))
+    pts, lab = np.vstack(pts), np.vstack(lab)
+    tree = cKDTree(pts)
+    out = {rid: p for rid, p in zip(mi1_pos.index, mi1_pos.values)}
+    for rid, r in m[m.flyvis_type.isin(SKEL_TYPES)].iterrows():
+        xyz = _skeleton_nodes(r.root_id_meta)
+        if xyz is None:
+            continue
+        d, idx = tree.query(xyz, k=3)
+        inside = d[:, 0] < MEDULLA_RADIUS_UM
+        if inside.sum() >= 2:
+            out[rid] = lab[idx[inside]].mean(axis=(0, 1))
+    df = pd.DataFrame.from_dict(out, orient="index", columns=["px", "py"])
+    df["flyvis_type"] = m.flyvis_type.reindex(df.index)
+    return df
+
+
+def offset_sums(posdf, ed, targets):
+    """Per target cell and source type: synapse-weighted sums of (source - target) position."""
+    tgt_ids = posdf.index[posdf.flyvis_type.isin(targets)]
+    j = ed[ed.post.isin(tgt_ids) & ed.pre.isin(posdf.index)]
+    j = j.join(posdf, on="pre").join(posdf, on="post", rsuffix="_t")
+    j["wx"], j["wy"] = j.w * (j.px - j.px_t), j.w * (j.py - j.py_t)
+    g = j.groupby(["post", "flyvis_type_t", "flyvis_type"])[["wx", "wy", "w"]].sum().reset_index()
+    return g.rename(columns={"post": "target", "flyvis_type_t": "tgt", "flyvis_type": "src"})
+
+
+def angle_of(Q):
+    return float(np.rad2deg(np.arctan2(Q[1, 0], Q[0, 0])))
+
+
+def sheet_axes(P, flat):
+    """(2, 3): sheet axes mapped into 3D by a linear fit (average tangent directions)."""
+    J, *_ = np.linalg.lstsq(flat - flat.mean(0), P - P.mean(0), rcond=None)
+    return J
+
+
+def sheet_handedness(J, outward):
+    """Sign of det[a, b, n]: sheet axes a, b in 3D vs the outward normal n."""
+    return float(np.sign(np.linalg.det(np.stack([J[0], J[1], outward]))))
+
+
+def mirrored_orientation(Q_other, J_other, J_this, lateral):
+    """This side's Q predicted by mirroring the other side's lattice→3D map across the midline.
+
+    lattice dir e → 3D: J_other.T @ Q_other.T @ e → mirror → this sheet via pinv(J_this.T).
+    """
+    u = lateral / np.linalg.norm(lateral)
+    M = np.eye(3) - 2 * np.outer(u, u)
+    Qt = np.linalg.pinv(J_this.T) @ M @ J_other.T @ Q_other.T  # sheet ← lattice
+    U, _, Vt = np.linalg.svd(Qt.T)
+    return U @ Vt  # nearest orthogonal matrix
+
+
+def _procrustes(cells, force_det=None):
+    A, B, W = [], [], []
+    for (tgt, src), r in cells.groupby(["tgt", "src"])[["wx", "wy", "w"]].sum().iterrows():
+        fv = FV_OFFSETS[tgt].get(src)
+        if fv is None or r.w < 100 or np.linalg.norm(fv[0]) < 0.3 * COLUMN:
+            continue
+        A.append([r.wx / r.w, r.wy / r.w])
+        B.append(fv[0])
+        W.append(fv[1])
+    A, B, W = np.array(A), np.array(B), np.array(W)
+    U, _, Vt = np.linalg.svd((B * W[:, None]).T @ A)
+    best = {}
+    for det in (1, -1):
+        Q = U @ np.diag([1, det]) @ Vt
+        pred = A @ Q.T
+        cos = np.sum(pred * B, 1) / (np.linalg.norm(pred, axis=1) * np.linalg.norm(B, axis=1))
+        best[det] = (np.average(cos, weights=W), Q)
+    det = force_det or max(best, key=lambda d: best[d][0])
+    return det, best[det][1], best[det][0]
+
+
+def cosine_at(cells, Q):
+    """Mean cosine between FlyVis offsets and BANC offsets rotated by a given Q."""
+    num = den = 0.0
+    for (tgt, src), r in cells.groupby(["tgt", "src"])[["wx", "wy", "w"]].sum().iterrows():
+        fv = FV_OFFSETS[tgt].get(src)
+        if fv is None or r.w < 100 or np.linalg.norm(fv[0]) < 0.3 * COLUMN:
+            continue
+        a = Q @ np.array([r.wx / r.w, r.wy / r.w])
+        num += fv[1] * a @ fv[0] / (np.linalg.norm(a) * np.linalg.norm(fv[0]))
+        den += fv[1]
+    return num / den
+
+
+def fit_orientation(cells, n_boot=200, force_det=None):
+    """Procrustes FlyVis ↔ BANC offsets; bootstrap over target cells for the angle's 95% CI.
+
+    Returns det, Q, mean cosine, (ci_low, ci_high, fraction of resamples choosing the other det).
+    With ``force_det`` the handedness is fixed and only the angle is fitted.
+    """
+    det, Q, cos = _procrustes(cells, force_det)
+    a0, devs, flips = angle_of(Q), [], 0
+    ids = cells.target.unique()
+    by_target = cells.set_index("target")
+    rng = np.random.default_rng(0)
+    for _ in range(n_boot):
+        d2, Q2, _ = _procrustes(by_target.loc[rng.choice(ids, len(ids))].reset_index(), force_det)
+        if d2 != det:
+            flips += 1
+            continue
+        devs.append((angle_of(Q2) - a0 + 180) % 360 - 180)
+    ci = (a0 + np.percentile(devs, 2.5), a0 + np.percentile(devs, 97.5), flips / max(n_boot, 1)) if devs else (np.nan, np.nan, 0.0)
+    return det, Q, cos, ci
+
+
+MI1_SIDE_CENTERS = meta[meta.flyvis_type == "Mi1"].groupby("side")[["x", "y", "z"]].mean()
+MIDLINE = MI1_SIDE_CENTERS.mean().values
+
+# Dorsal rim area (DRA) columns sit at the dorsal edge of the medulla: an anatomical "up".
+_dra = pd.read_feather(DEFAULT_DATA_DIR / META_FILE, columns=["cell_type", "cell_sub_class", "side", "root_position_nm"])
+_dra = _dra[(_dra.cell_type.isin(["Mi1_DRA", "DmDRA1", "DmDRA2"]) | (_dra.cell_sub_class == "dorsal_rim"))
+            & _dra.root_position_nm.notna()].copy()
+_dra[["x", "y", "z"]] = _dra.root_position_nm.str.split(",", expand=True).astype(float).values
+DRA_CENTERS = _dra.groupby("side")[["x", "y", "z"]].mean()
+DRA_COUNTS = _dra.side.value_counts()
+
+
+def dorsal_agreement(Q, J, side):
+    """Cosine between the lattice's dorsal direction (hex +y, from the T4c motion test)
+    mapped into 3D, and the direction from the medulla centre to the DRA neurons."""
+    up_3d = J.T @ Q.T @ np.array([0.0, 1.0])
+    dra = DRA_CENTERS.loc[side].values - MI1_SIDE_CENTERS.loc[side].values
+    return float(up_3d @ dra / (np.linalg.norm(up_3d) * np.linalg.norm(dra)))
+
+
+def map_side(side, partner=None):
+    """``partner``: (Q, J, handedness) of the other, reliable side. The optic lobes are mirror
+    images, so this side's lattice→3D map has the opposite handedness, and its angle can be
+    predicted by mirroring the partner's map across the midline."""
     m = meta[meta.side == side].set_index("root_id")
     ed = edges[edges.pre.isin(m.index) & edges.post.isin(m.index)]
 
@@ -131,33 +290,43 @@ def map_side(side):
         pos = pd.concat([pos.loc[mi1.index], new])
     m = m.join(pos, how="inner")
 
-    # 3. Orientation from T4/T5 input offsets.
-    A, B, W = [], [], []
-    for t in DIRECTIONAL:
-        tgt = m[m.flyvis_type == t]
-        j = ed[ed.post.isin(tgt.index)].join(m[["flyvis_type", "px", "py"]], on="pre").join(
-            m[["px", "py"]], on="post", rsuffix="_t")
-        j["dx"], j["dy"] = j.px - j.px_t, j.py - j.py_t
-        for src, (fv_vec, fv_n) in flyvis_offsets(t).items():
-            g = j[j.flyvis_type == src]
-            if len(g) < 20 or np.linalg.norm(fv_vec) < 0.3 * COLUMN:
-                continue
-            A.append(np.average(g[["dx", "dy"]].values, axis=0, weights=g.w.values))
-            B.append(fv_vec)
-            W.append(fv_n)
-    A, B, W = np.array(A), np.array(B), np.array(W)
-    U, _, Vt = np.linalg.svd((B * W[:, None]).T @ A)
-    best = {}
-    for det in (1, -1):
-        Q = U @ np.diag([1, det]) @ Vt
-        pred = A @ Q.T
-        cos = np.sum(pred * B, 1) / (np.linalg.norm(pred, axis=1) * np.linalg.norm(B, axis=1))
-        best[det] = (np.average(cos, weights=W), Q)
-    det = max(best, key=lambda d: best[d][0])
-    Q = best[det][1]
-    print(f"[{side}] orientation from {len(A)} offset pairs: mean cosine "
-          f"rotation {best[1][0]:+.2f}, reflection {best[-1][0]:+.2f} -> using "
-          f"{'reflection' if det == -1 else 'rotation'}", flush=True)
+    # 3. Orientation from T4 input offsets. Positions come from skeletons projected onto the
+    #    Mi1 sheet, independent of step 2 (whose positions are partly derived from partners).
+    sk = skeleton_sheet_positions(m, mi1, pos.loc[mi1.index])
+    cells = offset_sums(sk, ed, [t for t in DIRECTIONAL if t.startswith("T4")])
+    lateral = MI1_SIDE_CENTERS.loc[side].values - MIDLINE
+    J = sheet_axes(P, flat)
+    h = sheet_handedness(J, lateral)
+    force = None if partner is None else int(-partner[2] * h)
+    det, Q, cos, (lo, hi, flips) = fit_orientation(cells, force_det=force)
+    if partner is not None:
+        free = fit_orientation(cells, n_boot=0)
+        Q_sym = mirrored_orientation(partner[0], partner[1], J, lateral)
+        print(f"[{side}] handedness fixed by mirror symmetry (free fit would choose "
+              f"{'reflection' if free[0] == -1 else 'rotation'}); mirrored partner predicts "
+              f"{'reflection' if np.linalg.det(Q_sym) < 0 else 'rotation'} {angle_of(Q_sym):+.0f}° "
+              f"(data cosine there {cosine_at(cells, Q_sym):+.2f}, rotated 180°: "
+              f"{cosine_at(cells, -Q_sym):+.2f})", flush=True)
+        print(f"[{side}] data fit below; DRA check: data fit {dorsal_agreement(Q, J, side):+.2f}, "
+              f"mirrored partner {dorsal_agreement(Q_sym, J, side):+.2f}", flush=True)
+        # Left BANC has ~6x fewer typed T4 and its T4 offsets give the right axis but the
+        # opposite sense (180°). Mirror symmetry and the DRA landmark agree with each other,
+        # so the mirrored partner orientation is used.
+        Q_data = Q
+    old = fit_orientation(offset_sums(m[["flyvis_type", "px", "py"]], ed, DIRECTIONAL), n_boot=0)
+    print(f"[{side}] orientation from skeletons ({len(sk)} neurons, {cells.target.nunique()} T4): "
+          f"{'reflection' if det == -1 else 'rotation'} {angle_of(Q):+.0f}° "
+          f"(bootstrap 95%: {lo:+.0f}°..{hi:+.0f}°, other handedness in {flips:.0%}), "
+          f"mean cosine {cos:+.2f} | propagated positions: "
+          f"{'reflection' if old[0] == -1 else 'rotation'} {angle_of(old[1]):+.0f}°, "
+          f"cosine {old[2]:+.2f}", flush=True)
+    if partner is not None:
+        Q = Q_sym
+        print(f"[{side}] using mirrored partner orientation {angle_of(Q):+.0f}° "
+              f"(data fit {angle_of(Q_data):+.0f}°)", flush=True)
+    print(f"[{side}] dorsal check vs {DRA_COUNTS.get(side, 0)} DRA neurons: lattice 'up' "
+          f"cosine {dorsal_agreement(Q, J, side):+.2f} (rotated 180°: {dorsal_agreement(-Q, J, side):+.2f})",
+          flush=True)
     m[["hx", "hy"]] = m[["px", "py"]].values @ Q.T
 
     # 4. Per-type assignment.
@@ -181,12 +350,15 @@ def map_side(side):
             rows.append((i, rid, d / COLUMN))
     out = pd.DataFrame(rows, columns=["flyvis_index", "root_id", "dist_columns"])
     out["eye"] = side
-    return out.merge(nodes, on="flyvis_index").merge(
+    return (Q, J, det * h), out.merge(nodes, on="flyvis_index").merge(
         meta[["root_id", "root_id_meta", "banc_888_id", "cell_type"]].rename(
             columns={"cell_type": "banc_cell_type"}), on="root_id")
 
 
-result = pd.concat([map_side(s) for s in ("right", "left")], ignore_index=True)
+# Right side first: ~6x more typed T4 than left, its handedness is unambiguous (bootstrap).
+right_frame, right = map_side("right")
+_, left = map_side("left", partner=right_frame)
+result = pd.concat([right, left], ignore_index=True)
 result = result.drop(columns="root_id").rename(columns={"root_id_meta": "root_id"})
 result = result[["eye", "flyvis_index", "flyvis_type", "u", "v", "root_id", "banc_888_id",
                  "banc_cell_type", "dist_columns"]]

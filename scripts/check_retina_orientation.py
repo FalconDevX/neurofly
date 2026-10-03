@@ -4,6 +4,8 @@ The same smooth random grey images go through (a) flygym Retina + our RetinaMapp
 (b) FlyVis BoxEye. Our hexal vector is then re-indexed by each of the 12 symmetries of
 the hex lattice (6 rotations x optional mirror); the correct orientation should give
 by far the highest correlation with BoxEye, and it should be the identity.
+Uses the left eye, whose mapping is unmirrored (the right eye is mirrored on purpose,
+see visual_pipeline/retina_mapper.py).
 """
 import sys
 from pathlib import Path
@@ -53,7 +55,7 @@ syms = symmetries()
 corr = {name: [] for name, _ in syms}
 for _ in range(20):
     grey = smooth_image()
-    ours = mapper.to_flyvis(retina.raw_image_to_hex_pxls(np.repeat((grey * 255).astype(np.uint8)[..., None], 3, 2)), "right")
+    ours = mapper.to_flyvis(retina.raw_image_to_hex_pxls(np.repeat((grey * 255).astype(np.uint8)[..., None], 3, 2)), "left")
     crop = torch.tensor(grey[r0:r1, c0:c1], dtype=torch.float32)[None, None]
     crop = F.interpolate(crop, size=(box_h, box_w), mode="bilinear")
     ref = box(crop.to(box.conv.weight.device))[0, 0, 0].cpu().numpy()
