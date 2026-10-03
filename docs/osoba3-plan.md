@@ -75,13 +75,13 @@ Sprawdzone: numpy 2.4.6, scipy 1.17.1, matplotlib 3.11.2, mujoco 3.14.0, model S
   (ten sam świat).
 - `sim/episode.py`: `CrashDetector` — wywrotka = nieudana próba: > 1 s do góry nogami (przechył > 90°,
   w powietrzu albo na ziemi) albo > 1.5 s na ziemi z przechyłem > 60° prawie bez ruchu. Krótki przewrót
-  w powietrzu nie kończy próby. Podgląd resetuje wtedy drona (ten sam świat); docelowo koniec epizodu w `DroneEnv`.
+  w powietrzu nie kończy próby. Podgląd resetuje wtedy drona (ten sam świat); docelowo koniec epizodu w `WorldEnv`.
 - **Dron obrócony o 180° wokół z** względem Menagerie: w oryginalnym X2 nos z kamerą jest po stronie −x, a cały
   projekt (Osoba 1, 2, regulator) przyjmuje +x = przód. Teraz nos jest w +x, W leci nosem do przodu.
   `x2_with_eyes()` Osoby 1 (używane w `example_sim_client.py`, `check_mujoco_eyes.py`, `demo_figure.py`) dokleja
   oczy do nieobróconego X2 z Menagerie: na siatce wypadają na ogonie, ale oczy nie widzą drona, a kierunek +x
   jest ten sam, więc obraz do FlyVis różni się tylko o kilka cm położenia kamery — kalibracja się nie psuje.
-  Docelowo te skrypty i `DroneEnv` mają używać jednego modelu: `sim/assets` (oczy na soczewkach nosa).
+  Docelowo te skrypty i `WorldEnv` mają używać jednego modelu: `sim/assets` (oczy na soczewkach nosa).
 - Kamery-oczy `eye_left` / `eye_right` w `sim/assets/x2/x2.xml`: orientacja wg specyfikacji Osoby 1
   (`visual_pipeline/drone_eyes.py`: 157°, ±70°, 512 × 450), pozycja na prawdziwych soczewkach kamery w gimbalu
   na nosie (x = 0.158, y = −0.002 / −0.018, z = 0.065). Podgląd pokazuje je w lewym dolnym rogu sceny
@@ -92,7 +92,7 @@ Sprawdzone: numpy 2.4.6, scipy 1.17.1, matplotlib 3.11.2, mujoco 3.14.0, model S
   (Windows, klawisze trzymane = prędkość kątowa):
   `W`/`S` nos w dół/górę, `A`/`D` przechył w lewo/prawo, `Q`/`E` obrót, `Shift`/`Ctrl` ciąg ±30% od
   zawisu, `L` kamera przypięta/swobodna, kółko zoom, `Backspace` reset drona, `N` nowy losowy świat,
-  `Spacja` pauza; `--seed` odtwarza świat (ziarno jest wypisywane w konsoli).
+  `CapsLock` wiatr, `Spacja` pauza; `--seed` odtwarza świat (ziarno jest wypisywane w konsoli).
   Klawisze lotu przechwytuje hook Windows (`sim/keyboard.py`), żeby nie przełączały skrótów podglądu MuJoCo.
 
 ## Pętla z BANC: `DroneEnv` (`sim/env.py`)
@@ -121,6 +121,30 @@ python scripts/fly_banc.py --local                    # wszystko w jednym proces
 python scripts/train_decoder.py --plan B              # trening dekodera (.venv312), wagi → data/decoders/
 python scripts/vision_server.py --decoder data/decoders/planB.npz
 ```
+
+## WorldEnv — środowisko treningowe (losowy świat) (Plan A)
+
+- `sim/world_env.py`: `WorldEnv` (Gymnasium). Akcja = `FlightCommand` Osoby 2: `[thrust 0..1 (0.5 = zawis), roll, pitch, yaw −1..1]`;
+  `control="acro"` (domyślnie, Plan A: prędkości kątowe, bez autostabilizacji) albo `"angle"` (Plan C, zapasowy:
+  symulator trzyma przechył). Obserwacja tylko jak u muszki: `eyes` (2 × 512 × 450 × 3) + `imu` (żyroskop,
+  akcelerometr). Prawdziwy stan i cel tylko w `info`. Koniec: `cel` / `wywrotka` / `poza planszą` (terminated),
+  `limit czasu` (truncated). Nagroda: postęp w stronę celu − koszt czasu ± 10 na końcu. Opcje: `start_noise`
+  (losowy przechył/prędkość na starcie), `wind`, `substeps` (3 × 10 ms = 30 Hz oczu).
+  Determinizm: IMU i stan w pełni; obraz oczu z dokładnością do szumu GPU (≤ 2/255 na 0.25 % pikseli).
+- `python -m sim.run_env` — `WorldEnv` w oknie. Bez modelu dron sam nie leci: sterujesz z klawiatury
+  (W/S, A/D, Shift/Ctrl, Q/E, CapsLock = wiatr, Backspace = od nowa, N = nowy świat) dokładnie przez interfejs
+  modelu (akcja `FlightCommand`, obserwacja oczy + IMU, koniec epizodu i nagroda w konsoli). Gdy będzie model:
+  `--model pakiet.modul:funkcja` (funkcja(obs) → akcja). Start w idealnym zawisie, `--start-noise` jak przy uczeniu.
+  Alt = autostabilizacja jak w `sim.viewer` (do testów; jej wynik też idzie do `WorldEnv` jako zwykła akcja).
+- `sim/wind.py`: wiatr przez model płynu MuJoCo (`opt.wind`), domyślnie 8 m/s w losowym kierunku + podmuchy ±3 m/s
+  (Ornstein-Uhlenbeck); `--wind-speed` w obu programach. Ze stabilizacją 8 m/s spycha z zawisu o 4.4 m / 10 s,
+  lot pod wiatr 3 m/s zwalnia o ~40 % (5 m/s: 1.8 m i ~30 %, 11 m/s: 7.7 m i ~60 %). W podglądzie: CapsLock = wiatr wł./wył., strzałka w prawym dolnym rogu.
+- Wydajność (GTX 1650): mapa cieni 2048 zamiast 4096 (`common.xml`) — render obu oczu 20 → 2.6 ms, widok główny
+  9 → 5 ms; odbicie terenu wyłączone (wymuszało drugi przebieg z cieniami). W `sim.viewer` podgląd oczu renderuje
+  się w osobnym wątku (`EyesWorker`) — główna pętla trzyma ~58 FPS (było ~29 z przeskokami do 70 ms).
+  Kamera przypięta za tyłem drona obraca się z jego kursem (wygładzenie w czasie, 0.25 s), kółko = zoom, L = swobodna.
+- `sim/terrain.py: upload_terrain()` — po `randomize()` trzeba wysłać teren do GPU każdego `mujoco.Renderer`
+  (np. oczu), inaczej kamery widzą poprzedni teren. `WorldEnv` i podgląd robią to same.
 
 ## Dalej
 

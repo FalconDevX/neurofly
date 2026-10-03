@@ -22,7 +22,9 @@
     <!-- 301 x 301 punktów = 0.2 m; size: pół-boki 30 m, zakres wysokości 3 m (od -1 do +2), podstawa 0.5 m -->
     <hfield name="terrain" nrow="301" ncol="301" size="30 30 3 0.5"/>
     <!-- kratka tej samej wielkości co na płaskiej podłodze (150 powtórzeń tekstury na 60 m) -->
-    <material name="terrain" texture="groundplane" texrepeat="150 150" reflectance="0.05"/>
+    <!-- reflectance 0: odbicie (było 0.05, praktycznie niewidoczne) wymuszało drugi przebieg renderu z cieniami —
+         ~8 ms na każde oko i klatkę podglądu; bez niego oko renderuje się w ~1.3 ms -->
+    <material name="terrain" texture="groundplane" texrepeat="150 150" reflectance="0"/>
     <material name="wall" rgba="0.55 0.6 0.65 0.35"/>
     <material name="target_zone" rgba="0.95 0.45 0.05 1"/>
     <material name="target_border" rgba="0.95 0.95 0.95 1"/>
