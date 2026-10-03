@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.png">
+    <img src="docs/assets/logo-light.png" alt="NeuroFly" width="420">
+  </picture>
+</p>
+
 # NeuroFly
 
 Hackathon: zamknięta pętla wzrok → connectome Drosophila → sterowanie → symulowany dron → nowy obraz.
