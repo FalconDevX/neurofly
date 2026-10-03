@@ -24,6 +24,8 @@ python -m sim.viewer                     # dron Osoby 3: łopaty, regulator, WAS
 python scripts/download_banc.py          # dane BANC v888 → data/
 ```
 
+Eksplorator BANC 3D (Next.js, render na GPU): `cd explorer && npm install && npm run dev` — szczegóły w [explorer/README.md](explorer/README.md).
+
 GPU dla symulacji BANC: `pip install torch --index-url https://download.pytorch.org/whl/cu126` (bez tego liczy na CPU).
 
 ## Plany
