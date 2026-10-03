@@ -256,6 +256,64 @@ def retina():
         cv2.imwrite(str(OUT / f"retina_{eye}.png"), cv2.cvtColor(out.astype(np.uint8), cv2.COLOR_RGB2BGR))
 
 
+def fly_xray(W=2600, H=1500, yaw=0.38, pitch=0.30, name="fly_xray.png"):
+    """Półprzezroczyste ciało muszki (NeuroMechFly, scripts/export_fly_body.py) z connectomem BANC w środku:
+    ciało jak szkło (jaśniejsze krawędzie — Fresnel), somy w kolorach klas, obwód lotu z poświatą.
+    Dopasowanie ciała do BANC jest ilustracyjne (głowa → mózg, tułów → VNC)."""
+    meta = json.loads((ROOT / "data" / "viz" / "fly_body.json").read_text())
+    raw = (ROOT / "data" / "viz" / "fly_body.bin").read_bytes()
+    n, m = meta["vertices"], meta["triangles"]
+    bpos = np.frombuffer(raw, np.float32, n * 3).reshape(n, 3)
+    tri = np.frombuffer(raw, np.uint32, m * 3, offset=n * 12).reshape(m, 3)
+    part = np.frombuffer(raw, np.uint8, n, offset=n * 12 + m * 12)
+
+    bu0, bv0, bz = project(bpos, yaw, pitch, 1.0, 0, 0)
+    bu, bv, tf = fit(bu0, bv0, W, H, margin=0.04)
+    img = np.zeros((H, W, 3), np.float32)
+
+    # ciało: normalne ścian w układzie widoku → Fresnel; ściany pogrupowane w poziomy jasności (szybkie fillPoly)
+    q3 = np.stack([bu, bv, bz], 1)
+    a, b, c = q3[tri[:, 0]], q3[tri[:, 1]], q3[tri[:, 2]]
+    nrm = np.cross(b - a, c - a)
+    nrm /= np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-9
+    fres = (1 - np.abs(nrm[:, 2])) ** 2.2
+    wing = part[tri[:, 0]] == 3
+    alpha = (0.025 + 0.42 * fres) * np.where(wing, 0.55, 1.0)
+    pts2 = np.stack([bu, bv], 1)[tri].astype(np.int32)
+    levels = np.linspace(alpha.min(), alpha.max(), 14)
+    idx = np.clip(np.digitize(alpha, levels) - 1, 0, len(levels) - 1)
+    body = np.zeros((H, W), np.float32)
+    for k in range(len(levels)):
+        sel = idx == k
+        if not sel.any():
+            continue
+        mask = np.zeros((H, W), np.uint8)
+        cv2.fillPoly(mask, list(pts2[sel]), 1, cv2.LINE_AA)
+        body += mask.astype(np.float32) * levels[k] * 120
+    img += body[..., None] * np.array([0.82, 0.84, 0.9], np.float32)
+
+    # somy (przygaszone, w kolorach klas)
+    su, sv, _ = project(xyz, yaw, pitch, 1.0, 0, 0)
+    su, sv = tf(su, sv)
+    col = np.array([CLASS_COLOR[c] for c in cls], np.float32)
+    splat(img, su, sv, col, np.full(len(su), 0.06), r=1)
+
+    # obwód lotu: poświata (szeroko, rozmyte) + cienka jasna linia
+    glow, line = np.zeros_like(img), np.zeros_like(img)
+    for nr in d["neurons"]:
+        cc = GROUP_COLOR.get(nr["group"].rsplit("_", 1)[0], (161, 161, 170))
+        for ln in nr["lines"]:
+            pu, pv, _ = project(np.array(ln, np.float32), yaw, pitch, 1.0, 0, 0)
+            pu, pv = tf(pu, pv)
+            pts = np.stack([pu, pv], 1).astype(np.int32)
+            cv2.polylines(glow, [pts], False, tuple(float(x) * 0.25 for x in cc), 6, cv2.LINE_AA)
+            cv2.polylines(line, [pts], False, tuple(float(x) * 0.8 for x in cc), 2, cv2.LINE_AA)
+    img += cv2.GaussianBlur(glow, (0, 0), 6) + line
+    img = BG + (255 - BG) * (1 - np.exp(-img / 210.0))
+    out = np.clip(img, 0, 255).astype(np.uint8)
+    cv2.imwrite(str(OUT / name), cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
+
+
 def finish():
     """PNG → JPG dla prezentacji, logo z eksploratora, dane wykresu ewaluacji."""
     import shutil
@@ -272,12 +330,14 @@ def finish():
 
 
 if __name__ == "__main__":
-    what = sys.argv[1:] or ["connectome", "circuit", "sim", "retina", "finish"]
+    what = sys.argv[1:] or ["connectome", "circuit", "flybody", "sim", "retina", "finish"]
     if "connectome" in what:
         connectome(2600, 1300, yaw=0.5, pitch=0.25, name="connectome_wide.png", horizontal=True)
         connectome(1400, 1700, yaw=0.55, pitch=0.25, name="connectome_3d.png", labels=REGION_LABELS, margin_x=0.12)
     if "circuit" in what:
         circuit(1400, 1700, labels=CIRCUIT_LABELS, margin_x=0.12)
+    if "flybody" in what:
+        fly_xray()
     if "sim" in what:
         sim_images()
     if "retina" in what:

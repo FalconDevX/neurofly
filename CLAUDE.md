@@ -167,6 +167,8 @@ Następca artifactu: Next.js 16 + three.js / `@react-three/fiber`, render na GPU
 z ShaderMaterial, szkielety = jedna `LineSegments`; filtry (klasy, grupy, zakres mózg/VNC, tryb, beacon) to uniformy
 w `lib/shaders.ts`. Mieszanie alfa zwykłe z małym kryciem (nie addytywne) — użytkownik odrzucił przepalanie do bieli.
 Etykiety regionów to divy nad canvasem pozycjonowane w `useFrame` (drei `Html` gubiło etykietę mózgu).
+Ciało muszki: półprzezroczysta siatka NeuroMechFly (`python scripts/export_fly_body.py` → `data/viz/fly_body.*`,
+dopasowanie ILUSTRACYJNE: głowa → mózg, tułów → VNC), shader Fresnela w `lib/shaders.ts`, przycisk „Fly body”.
 Dane: `npm run dev` / `build` uruchamia `scripts/sync-data.mjs`, który kopiuje `../data/viz/*.json` do `public/data`
 (ignorowane w git). Statyczny eksport `out/`.
 

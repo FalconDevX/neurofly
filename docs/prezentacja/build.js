@@ -103,7 +103,7 @@ function content(title, section) {
 pres.addSection({ title: "Start" });
 {
   const s = pres.addSlide({ masterName: "TITLE", sectionTitle: "Start" });
-  s.addImage({ path: A("connectome_wide.jpg"), x: 4.1, y: 0.75, w: 5.9, h: 2.95, objectName: "render-connectome" });
+  s.addImage({ path: A("fly_xray.jpg"), x: 3.55, y: 0.1, w: 6.45, h: 3.72, objectName: "render-fly-xray" });
   s.addImage({ path: A("logo.png"), x: 0.6, y: 1.25, w: 1.2, h: 0.71, objectName: "logo" });
   text(s, "NeuroFly", { x: 0.6, y: 2.1, w: 5, h: 0.9, fontSize: 54, bold: true, objectName: "title" });
   text(s, "Mózg muszki owocowej\npilotuje drona", { x: 0.6, y: 3.0, w: 3.5, h: 0.8, fontSize: 20, color: T.lt2, objectName: "subtitle" });
@@ -111,7 +111,8 @@ pres.addSection({ title: "Start" });
     x: 0.6, y: 4.55, w: 8.8, h: 0.35, fontSize: 12, color: T.accent5, objectName: "footer",
   });
   s.addNotes("NeuroFly: obraz z kamer drona przechodzi przez model oka muszki (FlyVis), potem przez prawdziwy connectome " +
-    "Drosophila (BANC v888, mózg + brzuszny łańcuch nerwowy), a aktywność neuronów lotu steruje dronem w symulatorze.");
+    "Drosophila (BANC v888, mózg + brzuszny łańcuch nerwowy), a aktywność neuronów lotu steruje dronem w symulatorze. " +
+    "Render: półprzezroczyste ciało NeuroMechFly (FlyGym) z connectomem BANC w środku — dopasowanie ciała ilustracyjne.");
 }
 
 // 2. Idea: pętla zamknięta

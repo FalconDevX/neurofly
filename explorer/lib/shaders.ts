@@ -54,6 +54,7 @@ export const lineVertex = /* glsl */ `
   uniform float uSel;
   uniform int uBearing;
   uniform int uMode;
+  uniform float uBoost;   // > 1: szkielety jaśniejsze (np. na tle półprzezroczystego ciała muszki)
   varying vec3 vColor;
   varying float vAlpha;
   varying float vY;
@@ -67,10 +68,40 @@ export const lineVertex = /* glsl */ `
       vAlpha = (0.05 + 0.45 * a) * on;
     } else {
       vColor = uGroupColor[g];
-      vAlpha = (uMode == 1 ? 0.5 : 0.22) * on;
+      vAlpha = min(1.0, (uMode == 1 ? 0.5 : 0.22) * uBoost) * on;
     }
     vY = position.y;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+/** Ciało muszki: szare „szkło” — krawędzie (Fresnel) jaśniejsze, środek prawie przezroczysty, żeby nerwy
+ *  w środku były widoczne. aPart: 0 tułów, 1 oczy, 2 nogi, 3 skrzydła, 4 czułki / aparat gębowy. */
+export const bodyVertex = /* glsl */ `
+  attribute float aPart;
+  varying vec3 vN;
+  varying vec3 vV;
+  varying float vPart;
+  void main() {
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vN = normalize(normalMatrix * normal);
+    vV = normalize(-mv.xyz);
+    vPart = aPart;
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+export const bodyFragment = /* glsl */ `
+  uniform vec3 uColor;
+  uniform float uOpacity;
+  varying vec3 vN;
+  varying vec3 vV;
+  varying float vPart;
+  void main() {
+    float fres = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.2);
+    float part = vPart > 2.5 && vPart < 3.5 ? 0.55 : (vPart > 0.5 && vPart < 1.5 ? 1.25 : 1.0);  // skrzydła cieniej, oczy mocniej
+    float a = uOpacity * part * (0.03 + 0.55 * fres);
+    gl_FragColor = vec4(uColor * (0.75 + 0.5 * fres), a);
   }
 `;
 

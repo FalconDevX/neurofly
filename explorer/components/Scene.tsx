@@ -7,7 +7,7 @@ import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 
 import { CATS, GROUPS, type Prepared } from "@/lib/data";
-import { lineFragment, lineVertex, somaFragment, somaVertex } from "@/lib/shaders";
+import { bodyFragment, bodyVertex, lineFragment, lineVertex, somaFragment, somaVertex } from "@/lib/shaders";
 
 export type Mode = "explore" | "flight" | "activity";
 export type Scope = "all" | "brain" | "vnc";
@@ -20,6 +20,7 @@ export interface ViewState {
   groups: boolean[];
   selected: number;
   spin: boolean;
+  body: boolean; // półprzezroczyste ciało muszki (NeuroMechFly) wokół connectomu
   labels: boolean; // etykiety części układu nerwowego nad sceną
   descs: boolean; // krótkie opisy pod etykietami
 }
@@ -93,6 +94,7 @@ function Skeletons({ data, view }: { data: Prepared; view: ViewState }) {
           uGroupOn: { value: GROUPS.map(() => 1) },
           uGroupColor: { value: GROUPS.map((g) => new THREE.Color(g.color)) },
           uSel: { value: -1 },
+          uBoost: { value: 1 },
           uBearing: { value: 1 },
           uMode: { value: 0 },
           uScope: { value: 0 },
@@ -104,10 +106,38 @@ function Skeletons({ data, view }: { data: Prepared; view: ViewState }) {
   const u = material.uniforms;
   u.uGroupOn.value = view.groups.map((g) => (g ? 1 : 0));
   u.uSel.value = view.selected;
+  u.uBoost.value = view.body && data.body ? 1.8 : 1;
   u.uBearing.value = view.bearing;
   u.uMode.value = MODE_ID[view.mode];
   u.uScope.value = SCOPE_ID[view.scope];
   return <lineSegments geometry={geometry} material={material} frustumCulled={false} />;
+}
+
+/** Ciało muszki — ilustracja (NeuroMechFly dopasowane do BANC: głowa → mózg, tułów → VNC), nie dane BANC. */
+function FlyBody({ data, view }: { data: Prepared; view: ViewState }) {
+  const geometry = useMemo(() => {
+    if (!data.body) return null;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(data.body.pos, 3));
+    g.setAttribute("aPart", new THREE.BufferAttribute(data.body.part, 1));
+    g.setIndex(new THREE.BufferAttribute(data.body.index, 1));
+    g.computeVertexNormals();
+    return g;
+  }, [data]);
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: bodyVertex,
+        fragmentShader: bodyFragment,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        uniforms: { uColor: { value: new THREE.Color("#a1a1aa") }, uOpacity: { value: 0.9 } },
+      }),
+    [],
+  );
+  if (!geometry || !view.body) return null;
+  return <mesh geometry={geometry} material={material} renderOrder={-1} frustumCulled={false} />;
 }
 
 function SelectedNeuron({ data, index }: { data: Prepared; index: number }) {
@@ -231,6 +261,7 @@ export default function Scene({ data, view, api, onPick }: { data: Prepared; vie
       gl={{ antialias: true, powerPreference: "high-performance" }}
       style={{ background: "transparent" }}
     >
+      <FlyBody data={data} view={view} />
       <Somas data={data} view={view} />
       <Skeletons data={data} view={view} />
       <SelectedNeuron data={data} index={view.selected} />

@@ -20,6 +20,8 @@ if (!existsSync(anatomy) || !existsSync(viz)) {
 
 mkdirSync(dst, { recursive: true });
 copyFileSync(anatomy, join(dst, "banc_anatomy.json"));
+// ciało muszki (NeuroMechFly) do półprzezroczystej nakładki — opcjonalne: python scripts/export_fly_body.py
+for (const f of ["fly_body.bin", "fly_body.json"]) if (existsSync(join(src, f))) copyFileSync(join(src, f), join(dst, f));
 
 // komendy Planu C dla tych samych kierunków beacona co aktywność w anatomii, bez obrotu (roll_rate = 0)
 const { bearings } = JSON.parse(readFileSync(anatomy, "utf8"));

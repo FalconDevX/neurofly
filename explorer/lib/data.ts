@@ -95,16 +95,43 @@ export interface Prepared {
   labels: Label[];
   line: { pos: Float32Array; group: Float32Array; neuron: Float32Array; act: Float32Array };
   pick: Float32Array; // x, y, z, indeks neuronu
+  body: { pos: Float32Array; index: Uint32Array; part: Float32Array } | null; // ciało muszki (ilustracja), brak pliku → null
 }
 
 const ALPH = "0123456789abcdefghijklmnopqrstuvwxyz";
 
 export async function loadData(): Promise<Prepared> {
-  const [raw, cmds] = await Promise.all([
+  const [raw, cmds, body] = await Promise.all([
     fetch("data/banc_anatomy.json").then((r) => r.json() as Promise<RawData>),
     fetch("data/cmds.json").then((r) => r.json() as Promise<Cmd[]>),
+    loadBody(),
   ]);
-  return prepare(raw, cmds);
+  const p = prepare(raw, cmds);
+  if (body) {  // pozycje w µm BANC → scena (ten sam środek i skala co somy)
+    const pos = new Float32Array(body.pos.length);
+    for (let i = 0; i < body.pos.length; i += 3) pos.set(p.toScene(body.pos[i], body.pos[i + 1], body.pos[i + 2]), i);
+    p.body = { pos, index: body.index, part: body.part };
+  }
+  return p;
+}
+
+/** Ciało muszki z scripts/export_fly_body.py: float32 pozycje (µm BANC), uint32 indeksy, uint8 części. */
+async function loadBody(): Promise<{ pos: Float32Array; index: Uint32Array; part: Float32Array } | null> {
+  try {
+    const [meta, buf] = await Promise.all([
+      fetch("data/fly_body.json").then((r) => (r.ok ? r.json() : null)),
+      fetch("data/fly_body.bin").then((r) => (r.ok ? r.arrayBuffer() : null)),
+    ]);
+    if (!meta || !buf) return null;
+    const n = meta.vertices as number, m = meta.triangles as number;
+    return {
+      pos: new Float32Array(buf, 0, n * 3),
+      index: new Uint32Array(buf, n * 12, m * 3),
+      part: Float32Array.from(new Uint8Array(buf, n * 12 + m * 12, n)),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function prepare(raw: RawData, cmds: Cmd[]): Prepared {
@@ -202,5 +229,6 @@ export function prepare(raw: RawData, cmds: Cmd[]): Prepared {
     labels,
     line: { pos, group, neuron, act },
     pick: new Float32Array(pick),
+    body: null,
   };
 }

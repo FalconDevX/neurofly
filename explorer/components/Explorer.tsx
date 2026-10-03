@@ -27,7 +27,7 @@ export default function Explorer() {
   const [view, setView] = useState<ViewState>({
     bearing: 1, mode: "explore", scope: "all",
     cats: CATS.map(() => true), groups: GROUPS.map(() => true), selected: -1, spin: false,
-    labels: true, descs: true,
+    labels: true, descs: true, body: true,
   });
   const api = useRef<ViewApi | null>(null);
   const set = useCallback((patch: Partial<ViewState>) => setView((v) => ({ ...v, ...patch })), []);
@@ -36,12 +36,12 @@ export default function Explorer() {
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("neurofly.labels") ?? "null");
-      if (saved) set({ labels: !!saved.labels, descs: !!saved.descs });
+      if (saved) set({ labels: !!saved.labels, descs: !!saved.descs, body: saved.body ?? true });
     } catch { /* prywatne okno / zablokowany storage */ }
   }, [set]);
   useEffect(() => {
-    try { localStorage.setItem("neurofly.labels", JSON.stringify({ labels: view.labels, descs: view.descs })); } catch { /* j.w. */ }
-  }, [view.labels, view.descs]);
+    try { localStorage.setItem("neurofly.labels", JSON.stringify({ labels: view.labels, descs: view.descs, body: view.body })); } catch { /* j.w. */ }
+  }, [view.labels, view.descs, view.body]);
 
   useEffect(() => {
     loadData()
@@ -98,6 +98,10 @@ export default function Explorer() {
               <Tool title="Zoom out" onClick={() => api.current?.zoom(1.25)} d="M5 12h14" />
               <Tool title="Side / front view" onClick={() => api.current?.side()} d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5" />
               <Tool title="Rotate" pressed={view.spin} onClick={() => set({ spin: !view.spin })} d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" />
+              {data?.body && (
+                <Tool title={view.body ? "Hide fly body" : "Show fly body"} pressed={view.body} onClick={() => set({ body: !view.body })}
+                  d="M12 4a2 2 0 1 0 0 4a2 2 0 1 0 0-4M12 8v12M12 10c-3-3-8-3-9 1 1 4 6 4 9 1M12 10c3-3 8-3 9 1-1 4-6 4-9 1M10 20h4" />
+              )}
               <Tool title={view.labels ? "Hide labels" : "Show labels"} pressed={view.labels} onClick={() => set({ labels: !view.labels })}
                 d="M4 7V4h16v3M9 20h6M12 4v16" />
               <Tool title={view.descs ? "Hide label descriptions" : "Show label descriptions"} pressed={view.labels && view.descs}
