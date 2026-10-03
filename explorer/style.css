@@ -142,3 +142,8 @@ tr.link td:nth-child(2) { color: var(--accent); }
 .foot { max-width: 140ch; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 .view canvas { display: block; width: 100% !important; height: 100% !important; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.check input { accent-color: var(--accent); }
+.range { display: grid; grid-template-columns: 58px 1fr 44px; gap: 8px; align-items: center; font: 12px var(--mono); color: var(--muted); }
+.range input { width: 100%; accent-color: var(--accent); }
+.range output { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }

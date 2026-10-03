@@ -60,11 +60,30 @@ class RateDynamics:
         """Aktualne aktywności (N,) jako numpy."""
         return self._r if self.device == "cpu" else self._r.cpu().numpy()
 
+    def _dev_index(self, idx: np.ndarray):
+        """Indeksy na GPU; ta sama tablica z klatki na klatkę jest kopiowana tylko raz."""
+        cache = self.__dict__.setdefault("_idx_cache", {})
+        hit = cache.get(id(idx))
+        if hit is None or hit[0] is not idx:
+            hit = cache[id(idx)] = (idx, torch.as_tensor(idx, device=self.device))
+        return hit[1]
+
     def rates_at(self, idx: np.ndarray) -> np.ndarray:
         """Aktywności wybranych neuronów bez kopiowania całego wektora z GPU."""
         if self.device == "cpu":
             return self._r[idx]
-        return self._r[torch.as_tensor(idx, device=self.device)].cpu().numpy()
+        return self._r[self._dev_index(idx)].cpu().numpy()
+
+    def levels_at(self, idx: np.ndarray, floor: float = 1e-6) -> np.ndarray:
+        """Aktywności wybranych neuronów w skali log ``floor``..1 → uint8 0..255, liczone na urządzeniu
+        (z GPU wraca 1 bajt na neuron zamiast 4)."""
+        decades = -np.log10(floor)
+        if self.device == "cpu":
+            lv = (np.log10(np.clip(self._r[idx], floor, 1.0)) + decades) / decades
+            return np.round(lv * 255).astype(np.uint8)
+        r = self._r[self._dev_index(idx)]
+        lv = (torch.log10(r.clamp(floor, 1.0)) + decades) / decades
+        return (lv * 255).round().to(torch.uint8).cpu().numpy()
 
     def reset(self) -> None:
         self._r[:] = 0.0

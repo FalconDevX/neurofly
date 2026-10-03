@@ -150,6 +150,24 @@ def test_gpu_matches_cpu():
     assert np.allclose(feats["cpu"], feats["cuda"], atol=1e-5)
 
 
+@pytest.mark.skipif(not __import__("banc_control.dynamics").dynamics.default_device() == "cuda",
+                    reason="brak CUDA")
+def test_levels_gpu_match_cpu():
+    """Kwantyzacja aktywności dla eksploratora na żywo (log 10⁻⁶..1 → uint8) liczona na GPU = na CPU."""
+    c = Connectome.from_banc_tables(*mini_banc())
+    stim = FakeVision(c)(0.5)
+    idx = np.arange(c.n)
+    levels = {}
+    for dev in ("cpu", "cuda"):
+        ctrl = BancController(c, device=dev)
+        for _ in range(20):
+            ctrl.step(stim)
+        levels[dev] = ctrl.dyn.levels_at(idx)
+        assert levels[dev].dtype == np.uint8 and ctrl.dyn.levels_at(idx) is not levels[dev]
+    assert np.abs(levels["cpu"].astype(int) - levels["cuda"]).max() <= 1
+    assert levels["cpu"].max() > 0
+
+
 def test_yaw_sign_from_rotation_makes_optomotor_corrective():
     c, ctrl = make_controller()
     vision = FakeVision(c)

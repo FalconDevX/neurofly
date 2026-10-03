@@ -103,6 +103,8 @@ function prepare(raw, cmds) {
 const somaVertex = `
   attribute float aCat;
   attribute vec3 aAct;
+  attribute float aLive;  // aktywność z modelu na żywo (uint8 znormalizowany → 0..1)
+  uniform int uLive;
   uniform float uCatOn[6];
   uniform vec3 uCatColor[6];
   uniform int uBearing;
@@ -117,7 +119,7 @@ const somaVertex = `
     int c = int(aCat + 0.5);
     bool inScope = uScope == 0 || (uScope == 1 ? position.y > uNeckY : position.y <= uNeckY);
     if (uCatOn[c] < 0.5 || !inScope) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
-    float a = uBearing == 0 ? aAct.x : (uBearing == 1 ? aAct.y : aAct.z);
+    float a = uLive == 1 ? aLive : (uBearing == 0 ? aAct.x : (uBearing == 1 ? aAct.y : aAct.z));
     if (uMode == 2) {
       float hot = clamp((a - 0.4) / 0.6, 0.0, 1.0);
       vColor = mix(vec3(0.30, 0.36, 0.72), vec3(1.0, 0.82, 0.32), hot);
@@ -145,6 +147,8 @@ const lineVertex = `
   attribute float aGroup;
   attribute float aNeuron;
   attribute vec3 aAct;
+  attribute float aLive;
+  uniform int uLive;
   uniform float uGroupOn[6];
   uniform vec3 uGroupColor[6];
   uniform float uSel;
@@ -156,7 +160,7 @@ const lineVertex = `
   void main() {
     int g = int(aGroup + 0.5);
     float on = uGroupOn[g] * (abs(aNeuron - uSel) < 0.5 ? 0.0 : 1.0);  // wybrany rysowany osobno
-    float a = uBearing == 0 ? aAct.x : (uBearing == 1 ? aAct.y : aAct.z);
+    float a = uLive == 1 ? aLive : (uBearing == 0 ? aAct.x : (uBearing == 1 ? aAct.y : aAct.z));
     if (uMode == 2) {
       vColor = a > 0.55 ? vec3(1.0, 0.82, 0.35) : vec3(0.36, 0.42, 0.66);
       vAlpha = (0.05 + 0.45 * a) * on;
@@ -209,6 +213,10 @@ const $ = (id) => document.getElementById(id);
 
 const view = { bearing: 1, mode: "explore", scope: "all", cats: CATS.map(() => true), groups: GROUPS.map(() => true), selected: -1, spin: false };
 const ui = { by: "class", dir: "in", copied: false };
+// model na żywo: BANC v888 liczony przez serwer na CUDA, sterowany suwakami
+const live = { available: false, on: true, info: null, bearing: 0, yaw: 0, state: null, flight: null };
+const liveActive = () => live.available && live.on;
+const signed = (v, d) => `${v > 0 ? "+" : ""}${(+v).toFixed(d)}`;
 let data = null, gfx = null;
 
 function set(patch) {
@@ -229,7 +237,9 @@ function render() {
     `<button class="tab" role="tab" aria-selected="${view.mode === m.id}" data-act="mode" data-arg="${m.id}">${m.name}</button>`).join("");
   $("pills").innerHTML = SCOPES.map((s) =>
     `<button aria-pressed="${view.scope === s.id}" data-act="scope" data-arg="${s.id}">${s.name}</button>`).join("");
-  $("mode-note").textContent = MODES.find((m) => m.id === view.mode).note;
+  $("mode-note").textContent = view.mode === "activity" && liveActive()
+    ? "Jasność = aktywność modelu liczonego teraz na GPU dla ustawień z suwaków (skala log 10⁻⁶–1)."
+    : MODES.find((m) => m.id === view.mode).note;
   $("spin").setAttribute("aria-pressed", view.spin);
   const all = view.cats.every(Boolean);
   $("legend").innerHTML = `<button class="all" aria-pressed="${all}" data-act="cats"><i></i>Wszystkie</button>` +
@@ -241,12 +251,23 @@ function render() {
 
 function renderSide() {
   const counts = GROUPS.map((g) => data.raw.neurons.filter((n) => groupKey(n) === g.key).length);
-  const cmd = data.cmds[view.bearing], s = data.raw.stats;
-  const bars = AXES.map((a) => {
-    const v = cmd[a], w = a === "thrust" ? v * 100 : Math.abs(v) * 50;
-    const left = a === "thrust" ? 0 : v >= 0 ? 50 : 50 - w;
-    return `<div class="cmd"><span>${a}</span><div class="bar ${a === "thrust" ? "" : "center"}"><i style="left:${left}%;width:${w}%"></i></div><output>${v.toFixed(2)}</output></div>`;
-  }).join("");
+  const s = data.raw.stats, on = liveActive();
+  const bars = AXES.map((a) =>
+    `<div class="cmd"><span>${a}</span><div class="bar ${a === "thrust" ? "" : "center"}"><i id="bar-${a}"></i></div><output id="out-${a}"></output></div>`).join("");
+  const liveCard = `
+    <div class="card">
+      <div class="label">Model na żywo</div>
+      <div class="status"><i${live.available ? "" : ' style="background:var(--muted);box-shadow:none"'}></i><span id="live-status">${esc(liveStatus())}</span></div>
+      ${live.available ? `<label class="check"><input type="checkbox" id="live-on"${live.on ? " checked" : ""}> Licz na żywo (pełny v888)</label>` : ""}
+    </div>`;
+  const inputs = on ? `
+      <label class="range"><span>Kąt</span><input type="range" id="live-bearing" min="-90" max="90" step="1" value="${live.bearing}"><output id="live-bearing-out">${signed(live.bearing, 0)}°</output></label>
+      <label class="range"><span>Yaw rate</span><input type="range" id="live-yaw" min="-3" max="3" step="0.1" value="${live.yaw}"><output id="live-yaw-out">${signed(live.yaw, 1)}</output></label>
+      <p class="note">Yaw rate (rad/s) z IMU → aferenty halter. Wzrok: FakeVision (lewa/prawa strona visual_projection), nie FlyVis.</p>`
+    : `<div class="seg" role="group" aria-label="Kierunek beacona">${BEARINGS.map((b, i) => {
+        const deg = data.raw.bearings[i];
+        return `<button aria-pressed="${view.bearing === i}" data-act="bearing" data-arg="${i}">${b} ${deg !== 0 ? `${deg > 0 ? "+" : ""}${deg}°` : ""}</button>`;
+      }).join("")}</div>`;
   const kv = [
     ["Neurony", fmt(s.neurons)], ["Połączenia ≥ 5", fmt(s.edges)], ["Synapsy", fmt(s.synapses)],
     ["Szkielety lotu", fmt(data.raw.neurons.length)], ["Wersja", "v888"], ["Źródło", "Lee Lab / Dataverse"],
@@ -262,13 +283,11 @@ function renderSide() {
       <div class="nav">${GROUPS.map((g, i) =>
         `<button aria-pressed="${view.groups[i]}" data-act="group" data-arg="${i}"><i style="background:${g.color}"></i>${g.name}<span>${counts[i]}</span></button>`).join("")}</div>
     </div>
+    ${liveCard}
     <div class="card">
       <div class="label">Beacon (wejście wzrokowe)</div>
-      <div class="seg" role="group" aria-label="Kierunek beacona">${BEARINGS.map((b, i) => {
-        const deg = data.raw.bearings[i];
-        return `<button aria-pressed="${view.bearing === i}" data-act="bearing" data-arg="${i}">${b} ${deg !== 0 ? `${deg > 0 ? "+" : ""}${deg}°` : ""}</button>`;
-      }).join("")}</div>
-      <div class="label">Komendy → dron (Plan C)</div>
+      ${inputs}
+      <div class="label">Komendy → dron (Plan C${on ? ", na żywo" : ""})</div>
       <div class="cmds">${bars}</div>
     </div>
     <div class="card">
@@ -277,7 +296,37 @@ function renderSide() {
       <a class="btn" href="https://doi.org/10.7910/DVN/7WTH1N" target="_blank" rel="noopener noreferrer">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>Pobierz dane BANC</a>
     </div>`;
+  updateCmds();
 }
+
+function liveStatus() {
+  const i = live.info;
+  if (!i) return "łączenie z serwerem…";
+  if (!live.available) return `Wyłączony: ${i.status}`;
+  const st = live.state;
+  return `${i.device === "cpu" ? "CPU" : `CUDA · ${i.gpu}`} · ${fmt(i.n)} neuronów` + (st ? ` · ${st.ms.toFixed(1)} ms/krok · t ${st.t.toFixed(1)} s` : "");
+}
+
+/** Paski komend i wartości na żywo bez przebudowy panelu (suwaki zostają nietknięte). */
+function updateCmds() {
+  if (!data) return;
+  const cmd = liveActive() && live.state ? live.state.cmd : data.cmds[view.bearing];
+  for (const a of AXES) {
+    const bar = $(`bar-${a}`), out = $(`out-${a}`);
+    if (!bar) continue;
+    const v = cmd[a], w = a === "thrust" ? v * 100 : Math.abs(v) * 50;
+    bar.style.left = `${a === "thrust" ? 0 : v >= 0 ? 50 : 50 - w}%`;
+    bar.style.width = `${w}%`;
+    out.textContent = v.toFixed(2);
+  }
+  const st = $("live-status");
+  if (st) st.textContent = liveStatus();
+  const av = $("act-val");
+  if (av && view.selected >= 0) av.textContent = fmtAct(selectedAct());
+}
+
+const selectedAct = () => liveActive() && live.flight ? live.flight[view.selected] : data.raw.neurons[view.selected].act[view.bearing];
+const fmtAct = (a) => (a < 0.01 ? a.toExponential(1) : a.toFixed(3));
 
 function regionCard() {
   const s = data.raw.stats;
@@ -316,7 +365,6 @@ function regionCard() {
 function inspectorCards() {
   const n = data.raw.neurons[view.selected];
   const g = GROUPS[data.groupOf[view.selected]];
-  const act = n.act[view.bearing];
   const kv = [
     ["Root ID", `<span class="mono small">${esc(n.id)}</span>`],
     ["Klasa", esc(n.super_class === "descending" ? "zstępujący (DN)" : CLASS_PL[n.super_class] ?? n.super_class)],
@@ -324,7 +372,7 @@ function inspectorCards() {
     ["Strona", n.side === "left" ? "lewa" : n.side === "right" ? "prawa" : "—"],
     ["NT", n.nt ? esc(`${n.nt}${n.nt_score != null ? ` (${n.nt_score})` : ""}`) : "—"],
     ["Syn. wej.", fmt(n.syn_in)], ["Syn. wyj.", fmt(n.syn_out)],
-    ["Aktywność", act < 0.01 ? act.toExponential(1) : act.toFixed(3)],
+    ["Aktywność", `<span id="act-val">${fmtAct(selectedAct())}</span>`],
   ];
   const rows = ui.dir === "in" ? n.inputs : n.outputs;
   const body = rows.length ? rows.map(([id, type, cls, cnt, reg], k) => {
@@ -455,11 +503,14 @@ function createScene(host) {
   somaGeo.setAttribute("position", new THREE.BufferAttribute(data.somaPos, 3));
   somaGeo.setAttribute("aCat", new THREE.BufferAttribute(data.somaCat, 1));
   somaGeo.setAttribute("aAct", new THREE.BufferAttribute(data.somaAct, 3));
+  const somaLive = new THREE.BufferAttribute(new Uint8Array(data.somaCat.length), 1, true);
+  somaLive.setUsage(THREE.DynamicDrawUsage);
+  somaGeo.setAttribute("aLive", somaLive);
   const somaMat = new THREE.ShaderMaterial({
     vertexShader: somaVertex, fragmentShader: somaFragment, transparent: true, depthWrite: false,
     uniforms: {
       uCatOn: { value: CATS.map(() => 1) }, uCatColor: { value: CATS.map((c) => new THREE.Color(c.color)) },
-      uBearing: { value: 1 }, uMode: { value: 0 }, uScope: { value: 0 }, uNeckY: { value: data.neckY },
+      uBearing: { value: 1 }, uLive: { value: 0 }, uMode: { value: 0 }, uScope: { value: 0 }, uNeckY: { value: data.neckY },
       uSize: { value: 4.2 }, uPR: { value: renderer.getPixelRatio() },
     },
   });
@@ -471,11 +522,15 @@ function createScene(host) {
   lineGeo.setAttribute("aGroup", new THREE.BufferAttribute(data.line.group, 1));
   lineGeo.setAttribute("aNeuron", new THREE.BufferAttribute(data.line.neuron, 1));
   lineGeo.setAttribute("aAct", new THREE.BufferAttribute(data.line.act, 3));
+  const lineNeuron = Int32Array.from(data.line.neuron);
+  const lineLive = new THREE.BufferAttribute(new Float32Array(lineNeuron.length), 1);
+  lineLive.setUsage(THREE.DynamicDrawUsage);
+  lineGeo.setAttribute("aLive", lineLive);
   const lineMat = new THREE.ShaderMaterial({
     vertexShader: lineVertex, fragmentShader: lineFragment, transparent: true, depthWrite: false,
     uniforms: {
       uGroupOn: { value: GROUPS.map(() => 1) }, uGroupColor: { value: GROUPS.map((g) => new THREE.Color(g.color)) },
-      uSel: { value: -1 }, uBearing: { value: 1 }, uMode: { value: 0 }, uScope: { value: 0 }, uNeckY: { value: data.neckY },
+      uSel: { value: -1 }, uBearing: { value: 1 }, uLive: { value: 0 }, uMode: { value: 0 }, uScope: { value: 0 }, uNeckY: { value: data.neckY },
     },
   });
   const lines = new THREE.LineSegments(lineGeo, lineMat);
@@ -516,10 +571,19 @@ function createScene(host) {
       l.uSel.value = view.selected;
       for (const u of [s, l]) {
         u.uBearing.value = view.bearing;
+        u.uLive.value = liveActive() ? 1 : 0;
         u.uMode.value = MODE_ID[view.mode];
         u.uScope.value = SCOPE_ID[view.scope];
       }
       controls.autoRotate = view.spin;
+    },
+    /** Nowa klatka z serwera: poziomy som (uint8) idą prosto do bufora GPU, szkielety per neuron. */
+    setLive(somas, flight) {
+      somaLive.array.set(somas);
+      somaLive.needsUpdate = true;
+      const lv = Float32Array.from(flight, actLevel), a = lineLive.array;
+      for (let i = 0; i < a.length; i++) a[i] = lv[lineNeuron[i]];
+      lineLive.needsUpdate = true;
     },
     reset: () => focus(...home()),
     zoom(f) { camera.position.sub(controls.target).multiplyScalar(f).add(controls.target); controls.update(); },
@@ -594,6 +658,47 @@ try {
   });
   gfx.update();
   set({ selected: best });
+  pollLive();
 } catch (e) {
   $("loading").textContent = `Nie udało się wczytać danych: ${e}`;
 }
+
+// ---------- model na żywo ----------
+
+async function pollLive() {
+  for (;;) {
+    try {
+      if (!live.available) {
+        live.info = await fetch("api/live").then((r) => r.json());
+        const was = live.available;
+        live.available = !!live.info.ready;
+        if (live.available !== was) set({});
+        else updateCmds();
+        if (!live.available) { await new Promise((r) => setTimeout(r, 1000)); continue; }
+      }
+      if (!live.on) { await new Promise((r) => setTimeout(r, 200)); continue; }
+      const t0 = performance.now();
+      const r = await fetch(`api/frame?bearing=${live.bearing}&yaw_rate=${live.yaw}`);
+      if (r.ok) {
+        live.state = JSON.parse(r.headers.get("X-State"));
+        const buf = await r.arrayBuffer(), n = data.somaCat.length, off = Math.ceil(n / 4) * 4;
+        live.flight = new Float32Array(buf, off, data.raw.neurons.length);
+        gfx.setLive(new Uint8Array(buf, 0, n), live.flight);
+        updateCmds();
+      }
+      await new Promise((res) => setTimeout(res, Math.max(0, 33 - (performance.now() - t0)))); // ~30 klatek/s
+    } catch {
+      live.available = false; live.info = { status: "brak połączenia z serwerem" };
+      set({});
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+}
+
+document.addEventListener("input", (e) => {
+  if (e.target.id === "live-bearing") { live.bearing = +e.target.value; $("live-bearing-out").textContent = `${signed(live.bearing, 0)}°`; }
+  if (e.target.id === "live-yaw") { live.yaw = +e.target.value; $("live-yaw-out").textContent = signed(live.yaw, 1); }
+});
+document.addEventListener("change", (e) => {
+  if (e.target.id === "live-on") { live.on = e.target.checked; set({}); }
+});

@@ -122,6 +122,10 @@ wyszukiwarka, komendy drona. Wszystkie liczby prawdziwe — nie wstawiać danych
 
 Eksplorator lokalnie: `python scripts/explorer.py` (http://localhost:8000) — serwer stdlib, strona `explorer/`
 (HTML + JS, three.js z CDN, bez npm/builda), dane prosto z `data/viz/`. Zastąpił wersję Next.js (gałąź `osoba2-nextjs-explorer`).
+Model na żywo (domyślnie; `--no-live` wyłącza): serwer trzyma `BancController` na pełnym v888 na CUDA (RTX 4060: ~6 ms/krok
+z kopiowaniem), kalibracja jak w `export_viz_data.py`, wejście FakeVision + yaw_rate z suwaków strony. `/api/frame` zwraca
+poziomy wszystkich som (uint8, kwantyzacja na GPU: `RateDynamics.levels_at`), aktywność neuronów lotu i komendy.
+Komendy na żywo zgodne z wynikami wyżej (+45°: roll 0.85, yaw 1.0; −45°: −0.78 / −0.73).
 
 ## Uwagi do repo
 
