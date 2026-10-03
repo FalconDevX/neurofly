@@ -19,45 +19,57 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from banc_control import BancController, Connectome  # noqa: E402
-from banc_control.connectome import DEFAULT_DATA_DIR, META_FILE, NON_NEURONS, flight_groups  # noqa: E402
+from banc_control.connectome import DEFAULT_DATA_DIR, EDGES_FILE, META_FILE, NON_NEURONS, flight_groups  # noqa: E402
 from banc_control.stubs import FakeVision  # noqa: E402
 
 SWC_DIR = DEFAULT_DATA_DIR / "swc"
 VOXEL_NM = np.array([4.0, 4.0, 45.0])
 BEARINGS = (-45, 0, 45)
 STEPS = 30
+TOP_PARTNERS = 8
 NODE_SPACING_UM = 8.0
 MIN_BRANCH_UM = 20.0  # krótsze gałązki pomijamy — przy tej skali są niewidoczne
 
 
 def load_swc(path: Path) -> list[list[tuple[float, float, float]]]:
-    """Zwraca listę polilinii (µm), uproszczonych do odstępu ~NODE_SPACING_UM; rozgałęzienia zachowane."""
+    """Polilinie szkieletu (µm). Usuwa końcowe gałązki krótsze niż MIN_BRANCH_UM i rozrzedza
+    węzły do ~NODE_SPACING_UM; pień i rozgałęzienia zostają."""
     rows = [ln.split() for ln in path.read_text().splitlines() if ln and not ln.startswith("#")]
     a = np.array([r for r in rows if len(r) == 7], dtype=float)
-    ids, xyz, parent = a[:, 0].astype(int), a[:, 2:5] / 1000.0, a[:, 6].astype(int)
+    ids, xyz, parent_id = a[:, 0].astype(int), a[:, 2:5] / 1000.0, a[:, 6].astype(int)
+    row = {i: k for k, i in enumerate(ids)}
+    parent = np.array([row.get(p, -1) for p in parent_id])
     children: dict[int, list[int]] = {}
     for k, p in enumerate(parent):
         children.setdefault(p, []).append(k)
-    roots = children.get(-1, [])
-    lines, stack = [], [(r, None) for r in roots]
+
+    order, stack = [], list(children.get(-1, []))  # rodzic przed dziećmi
     while stack:
-        k, start = stack.pop()
-        line = [xyz[start]] if start is not None else []
-        line.append(xyz[k])
-        cur = k
-        while True:
-            kids = children.get(ids[cur], [])
-            if len(kids) != 1:
-                break
-            cur = kids[0]
-            if np.linalg.norm(xyz[cur] - line[-1]) >= NODE_SPACING_UM:
-                line.append(xyz[cur])
-        if not np.allclose(line[-1], xyz[cur]):
-            line.append(xyz[cur])
-        if len(line) > 1 and np.linalg.norm(np.diff(line, axis=0), axis=1).sum() >= MIN_BRANCH_UM:
-            lines.append([tuple(np.round(p, 1)) for p in line])
-        stack += [(c, cur) for c in children.get(ids[cur], [])]
-    return lines
+        k = stack.pop()
+        order.append(k)
+        stack += children.get(k, [])
+    depth = np.zeros(len(ids))  # najdłuższa droga od węzła do liścia w jego poddrzewie
+    for k in reversed(order):
+        p = parent[k]
+        if p >= 0:
+            depth[p] = max(depth[p], depth[k] + np.linalg.norm(xyz[k] - xyz[p]))
+    keep = depth >= MIN_BRANCH_UM
+    keep[children.get(-1, [])] = True
+
+    lines = []
+    for k in order:
+        p = parent[k]
+        if not keep[k] or p < 0:
+            continue
+        kept_kids = [c for c in children.get(p, []) if keep[c]]
+        starts_line = not lines or len(kept_kids) > 1 or lines[-1][-1] is not None and lines[-1][1] != p
+        if starts_line:
+            lines.append([[xyz[p]], k])
+        line, _ = lines[-1]
+        if np.linalg.norm(xyz[k] - line[-1]) >= NODE_SPACING_UM or not any(keep[c] for c in children.get(k, [])):
+            line.append(xyz[k])
+        lines[-1][1] = k
+    return [[tuple(np.round(pt, 1)) for pt in line] for line, _ in lines if len(line) > 1]
 
 
 def main() -> None:
@@ -92,10 +104,34 @@ def main() -> None:
     sc = meta["super_class"].fillna("unknown").to_numpy()
     classes = sorted(set(sc))
     cls_idx = {s: i for i, s in enumerate(classes)}
+    region = meta["region"].fillna("").to_numpy()
+    regions = sorted(set(region))
+    reg_idx = {r: i for i, r in enumerate(regions)}
     somas = {
         "xyz": np.round(xyz[keep]).astype(int).ravel().tolist(),
         "act": ["".join(alphabet[k] for k in q(a[keep])) for a in act],
         "super_class": [cls_idx[s] for s in sc[keep]],
+        "region": [reg_idx[r] for r in region[keep]],
+    }
+
+    # prawdziwi partnerzy synaptyczni (edgelist v2, count >= 5) dla neuronów lotu
+    edges = pd.read_feather(DEFAULT_DATA_DIR / EDGES_FILE, columns=["pre", "post", "count"])
+    edges = edges[(edges["count"] >= 5) & (edges["pre"] != edges["post"])]  # bez autapsów, jak w Connectome
+    syn_in = edges.groupby("post")["count"].sum()
+    syn_out = edges.groupby("pre")["count"].sum()
+    info = meta.set_index("banc_888_id")
+    label = lambda rid: (info.at[rid, "cell_type"] or "?") if rid in info.index else "?"  # noqa: E731
+
+    def partners(col_self: str, col_other: str, rid: str) -> list[list]:
+        e = edges[edges[col_self] == rid].nlargest(TOP_PARTNERS, "count")
+        return [[o, label(o), (info.at[o, "super_class"] or "") if o in info.index else "",
+                 int(n), (info.at[o, "region"] or "") if o in info.index else ""]
+                for o, n in zip(e[col_other], e["count"])]
+
+    stats = {
+        "neurons": int(c.n), "edges": int(len(edges)), "synapses": int(edges["count"].sum()),
+        "by_class": pd.Series(sc).value_counts().to_dict(),
+        "by_region": pd.Series(np.where(region == "", "ascending/descending/inne", region)).value_counts().to_dict(),
     }
 
     neurons = []
@@ -105,15 +141,22 @@ def main() -> None:
         path = next((p for p in (SWC_DIR / f"{rid}_skeleton.swc", SWC_DIR / f"{rid}_l2.swc") if p.exists()), None)
         if path is None:
             continue
+        row = meta.loc[i]
         neurons.append({
-            "id": rid, "group": groups[i], "cell_type": meta.at[i, "cell_type"] or "",
+            "id": rid, "group": groups[i], "cell_type": row["cell_type"] or "",
+            "super_class": row["super_class"] or "", "cell_class": row["cell_class"] or "",
+            "side": row["side"] or "", "nt": row["neurotransmitter_predicted"] or "",
+            "nt_score": None if pd.isna(row["neurotransmitter_score"]) else round(float(row["neurotransmitter_score"]), 2),
+            "function": row["cell_function"] or row["super_cluster"] or "",
+            "syn_in": int(syn_in.get(rid, 0)), "syn_out": int(syn_out.get(rid, 0)),  # synapsy w krawędziach >= 5
+            "inputs": partners("post", "pre", rid), "outputs": partners("pre", "post", rid),
             "act": [round(float(a[i]), 6) for a in act],
             "lines": load_swc(path),
         })
 
     out = {
         "source": "BANC v888: banc_888_meta.feather (position), banc_banc_space_swc/*.swc, symulacja na pełnym grafie",
-        "bearings": list(BEARINGS), "classes": classes, "somas": somas, "neurons": neurons,
+        "bearings": list(BEARINGS), "classes": classes, "regions": regions, "stats": stats, "somas": somas, "neurons": neurons,
         "n_somas": int(len(keep)), "n_total": int(c.n),
     }
     dest = ROOT / "data" / "viz" / "banc_anatomy.json"

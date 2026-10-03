@@ -18,7 +18,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from banc_control import BancController, Connectome, ImuState  # noqa: E402
 from banc_control.connectome import DEFAULT_DATA_DIR, META_FILE, NON_NEURONS, SIDE, flight_groups  # noqa: E402
-from banc_control.readout import motor_features  # noqa: E402
 from banc_control.stubs import FakeVision  # noqa: E402
 
 BEARINGS_DEG = list(range(-60, 61, 15))
@@ -78,7 +77,7 @@ def main() -> None:
             grid.append({
                 "bearing": b, "roll_rate": rr,
                 "act": {n: round(float(r[idx[n]].mean()), 6) for n in names},
-                "mn": [round(float(x), 6) for x in motor_features(c, r)],
+                "mn": [round(float(x), 6) for x in ctrl.motor_features()],
                 "cmd": {k: round(getattr(cmd, k), 4) for k in ("thrust", "roll", "pitch", "yaw")},
             })
         print(f"bearing {b:+d}° gotowe ({time.time() - t0:.0f} s)")

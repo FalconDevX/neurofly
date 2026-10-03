@@ -133,3 +133,17 @@ def test_haltere_sign_calibration_makes_loop_corrective():
     for _ in range(30):
         cmd = ctrl.step([], ImuState(gyro=(1.5, 0.0, 0.0)))
     assert cmd.roll < 0
+
+
+@pytest.mark.skipif(not __import__("banc_control.dynamics").dynamics.default_device() == "cuda",
+                    reason="brak CUDA")
+def test_gpu_matches_cpu():
+    c = Connectome.from_banc_tables(*mini_banc())
+    stim = FakeVision(c)(0.5)  # FakeVision losuje szum przy każdym wywołaniu
+    feats = {}
+    for dev in ("cpu", "cuda"):
+        ctrl = BancController(c, device=dev)
+        for _ in range(20):
+            ctrl.step(stim, ImuState(gyro=(1.0, 0.0, 0.0)))
+        feats[dev] = ctrl.motor_features()
+    assert np.allclose(feats["cpu"], feats["cuda"], atol=1e-5)
