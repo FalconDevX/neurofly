@@ -59,6 +59,20 @@ def test_zmq_request_roundtrip():
     assert imu2 == imu and reset
 
 
+def test_zmq_calibration_roundtrip_keeps_scene_order():
+    from visual_pipeline.zmq_protocol import CALIBRATION_SCENES, decode_message, encode_calibration
+
+    scenes = {name: (np.full((8, 6, 3), 10 * i, np.uint8), np.full((8, 6, 3), 10 * i + 1, np.uint8))
+              for i, name in enumerate(reversed(CALIBRATION_SCENES))}
+    header, frames = decode_message(encode_calibration(scenes))
+    assert header["calibrate"] == list(CALIBRATION_SCENES)
+    for i, name in enumerate(header["calibrate"]):
+        assert np.array_equal(frames[2 * i], scenes[name][0])
+        assert np.array_equal(frames[2 * i + 1], scenes[name][1])
+    with pytest.raises(ValueError):
+        encode_calibration({"rest": scenes["rest"]})
+
+
 def test_to_luminance_is_grey_and_close_to_bt601():
     from visual_pipeline.frames import to_luminance
 

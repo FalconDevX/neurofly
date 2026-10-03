@@ -106,8 +106,14 @@ edges = edges[edges.pre.isin(ids) & edges.post.isin(ids)]
 print(f"BANC: {len(meta)} typed neurons of FlyVis types, {len(edges)} edges among them", flush=True)
 
 
-SKEL_TYPES = {"T4a", "T4b", "T4c", "T4d", "Mi4", "Mi9", "Tm3"}  # fetch_skeletons.py Mi1 + te
+# Types placed by their own skeleton (arbor inside the medulla). T5 dendrites are in the
+# lobula and CT1 is one giant neuron, so those are placed through their partners instead.
+SKEL_TYPES = set(fv_types) - {"T5a", "T5b", "T5c", "T5d", "CT1(M10)", "CT1(Lo1)", "Mi1"}
 MEDULLA_RADIUS_UM = 4.0  # węzeł szkieletu "w medulli" = blisko węzła kolumny Mi1
+# Inputs whose offset defines the T4 direction. Mi1 sits almost on the T4 column (cosine
+# +0.20 even on the well-annotated right side) and minor inputs (TmY15, T4→T4) are noisy;
+# with them the left fit was dominated by Mi1→T4a and the right angle drifted by ~14°.
+ORIENTATION_SOURCES = {"Tm3", "Mi4", "Mi9", "C3"}
 FV_OFFSETS = {t: flyvis_offsets(t) for t in DIRECTIONAL}
 
 
@@ -187,11 +193,13 @@ def _procrustes(cells, force_det=None):
     A, B, W = [], [], []
     for (tgt, src), r in cells.groupby(["tgt", "src"])[["wx", "wy", "w"]].sum().iterrows():
         fv = FV_OFFSETS[tgt].get(src)
-        if fv is None or r.w < 100 or np.linalg.norm(fv[0]) < 0.3 * COLUMN:
+        if src not in ORIENTATION_SOURCES or fv is None or r.w < 100 or np.linalg.norm(fv[0]) < 0.3 * COLUMN:
             continue
         A.append([r.wx / r.w, r.wy / r.w])
         B.append(fv[0])
         W.append(fv[1])
+    if len(A) < 2:
+        raise ValueError(f"za mało par wejście → T4 do orientacji ({len(A)})")
     A, B, W = np.array(A), np.array(B), np.array(W)
     U, _, Vt = np.linalg.svd((B * W[:, None]).T @ A)
     best = {}
@@ -209,7 +217,7 @@ def cosine_at(cells, Q):
     num = den = 0.0
     for (tgt, src), r in cells.groupby(["tgt", "src"])[["wx", "wy", "w"]].sum().iterrows():
         fv = FV_OFFSETS[tgt].get(src)
-        if fv is None or r.w < 100 or np.linalg.norm(fv[0]) < 0.3 * COLUMN:
+        if src not in ORIENTATION_SOURCES or fv is None or r.w < 100 or np.linalg.norm(fv[0]) < 0.3 * COLUMN:
             continue
         a = Q @ np.array([r.wx / r.w, r.wy / r.w])
         num += fv[1] * a @ fv[0] / (np.linalg.norm(a) * np.linalg.norm(fv[0]))
@@ -229,7 +237,10 @@ def fit_orientation(cells, n_boot=200, force_det=None):
     by_target = cells.set_index("target")
     rng = np.random.default_rng(0)
     for _ in range(n_boot):
-        d2, Q2, _ = _procrustes(by_target.loc[rng.choice(ids, len(ids))].reset_index(), force_det)
+        try:
+            d2, Q2, _ = _procrustes(by_target.loc[rng.choice(ids, len(ids))].reset_index(), force_det)
+        except ValueError:
+            continue
         if d2 != det:
             flips += 1
             continue
@@ -280,19 +291,23 @@ def map_side(side, partner=None):
     flat = (flat - np.median(flat, 0)) * (COLUMN / spacing)
     pos = pd.DataFrame(flat, index=mi1.index, columns=["px", "py"])
 
-    # 2. Propagate positions along synapses (undirected), Mi1 fixed.
+    # 2. Neurons with a skeleton in the medulla: own arbor projected onto the Mi1 sheet.
+    #    The rest (no skeleton, T5, CT1): synapse-weighted mean of placed partners, iterated.
+    sk = skeleton_sheet_positions(m, mi1, pos)
+    anchors = sk[["px", "py"]]
     und = pd.concat([ed.rename(columns={"pre": "a", "post": "b"}), ed.rename(columns={"pre": "b", "post": "a"})])
+    pos = anchors
     for _ in range(6):
-        j = und[und.b.isin(pos.index) & ~und.a.isin(mi1.index)].join(pos, on="b")
+        j = und[und.b.isin(pos.index) & ~und.a.isin(anchors.index)].join(pos, on="b")
         j[["px", "py"]] = j[["px", "py"]].mul(j.w, axis=0)
         agg = j.groupby("a")[["px", "py", "w"]].sum()
-        new = agg[["px", "py"]].div(agg.w, axis=0)
-        pos = pd.concat([pos.loc[mi1.index], new])
+        pos = pd.concat([anchors, agg[["px", "py"]].div(agg.w, axis=0)])
     m = m.join(pos, how="inner")
+    m["placed_by"] = np.where(m.index.isin(anchors.index), "skeleton", "partners")
+    print(f"[{side}] positions: {(m.placed_by == 'skeleton').sum()} from skeletons, "
+          f"{(m.placed_by == 'partners').sum()} from partners", flush=True)
 
-    # 3. Orientation from T4 input offsets. Positions come from skeletons projected onto the
-    #    Mi1 sheet, independent of step 2 (whose positions are partly derived from partners).
-    sk = skeleton_sheet_positions(m, mi1, pos.loc[mi1.index])
+    # 3. Orientation from T4 input offsets, using skeleton positions only.
     cells = offset_sums(sk, ed, [t for t in DIRECTIONAL if t.startswith("T4")])
     lateral = MI1_SIDE_CENTERS.loc[side].values - MIDLINE
     J = sheet_axes(P, flat)
@@ -312,14 +327,11 @@ def map_side(side, partner=None):
         # Left BANC has ~6x fewer typed T4 and its T4 offsets give the right axis but the
         # opposite sense (180°). Mirror symmetry and the DRA landmark agree with each other,
         # so the mirrored partner orientation is used.
-        Q_data = Q
-    old = fit_orientation(offset_sums(m[["flyvis_type", "px", "py"]], ed, DIRECTIONAL), n_boot=0)
+    Q_data = Q
     print(f"[{side}] orientation from skeletons ({len(sk)} neurons, {cells.target.nunique()} T4): "
           f"{'reflection' if det == -1 else 'rotation'} {angle_of(Q):+.0f}° "
           f"(bootstrap 95%: {lo:+.0f}°..{hi:+.0f}°, other handedness in {flips:.0%}), "
-          f"mean cosine {cos:+.2f} | propagated positions: "
-          f"{'reflection' if old[0] == -1 else 'rotation'} {angle_of(old[1]):+.0f}°, "
-          f"cosine {old[2]:+.2f}", flush=True)
+          f"mean cosine {cos:+.2f}", flush=True)
     if partner is not None:
         Q = Q_sym
         print(f"[{side}] using mirrored partner orientation {angle_of(Q):+.0f}° "
@@ -344,30 +356,42 @@ def map_side(side, partner=None):
                 rows.append((i, rid, np.nan))
             continue
         D = np.linalg.norm(F[:, None] - bc[["hx", "hy"]].values[None], axis=2)
-        r, c = linear_sum_assignment(D)
+        # Pairs beyond MAX_DIST get a prohibitive cost, so the assignment first maximises the
+        # number of pairs within 1 column and only then minimises distance. Plain distance
+        # cost shifted whole chains just past the threshold (Mi1: 95% of columns had a cell
+        # within 1 column but only 70% were kept).
+        r, c = linear_sum_assignment(np.where(D <= MAX_DIST, D, 1e6))
         keep = D[r, c] <= MAX_DIST
         for i, rid, d in zip(fv.flyvis_index.values[r[keep]], bc.index[c[keep]], D[r, c][keep]):
             rows.append((i, rid, d / COLUMN))
     out = pd.DataFrame(rows, columns=["flyvis_index", "root_id", "dist_columns"])
     out["eye"] = side
+    out = out.merge(m[["placed_by"]], left_on="root_id", right_index=True, how="left")
+    diag = {"cells": cells, "Q_data": Q_data, "Q": Q, "J": J, "positions": m}
     return (Q, J, det * h), out.merge(nodes, on="flyvis_index").merge(
         meta[["root_id", "root_id_meta", "banc_888_id", "cell_type"]].rename(
-            columns={"cell_type": "banc_cell_type"}), on="root_id")
+            columns={"cell_type": "banc_cell_type"}), on="root_id"), diag
 
 
-# Right side first: ~6x more typed T4 than left, its handedness is unambiguous (bootstrap).
-right_frame, right = map_side("right")
-_, left = map_side("left", partner=right_frame)
-result = pd.concat([right, left], ignore_index=True)
-result = result.drop(columns="root_id").rename(columns={"root_id_meta": "root_id"})
-result = result[["eye", "flyvis_index", "flyvis_type", "u", "v", "root_id", "banc_888_id",
-                 "banc_cell_type", "dist_columns"]]
-result.to_csv(MAP_FILE, index=False)
+def main() -> None:
+    # Right side first: ~6x more typed T4 than left, its handedness is unambiguous (bootstrap).
+    right_frame, right, _ = map_side("right")
+    _, left, _ = map_side("left", partner=right_frame)
+    result = pd.concat([right, left], ignore_index=True)
+    result = result.drop(columns="root_id").rename(columns={"root_id_meta": "root_id"})
+    result = result[["eye", "flyvis_index", "flyvis_type", "u", "v", "root_id", "banc_888_id",
+                     "banc_cell_type", "dist_columns", "placed_by"]]
+    result.to_csv(MAP_FILE, index=False)
 
-summary = result.groupby(["flyvis_type", "eye"]).size().unstack(fill_value=0)
-summary["flyvis_cells"] = nodes.flyvis_type.value_counts()
-print(summary.to_string())
-for side in ("right", "left"):
-    r = result[result.eye == side]
-    print(f"[{side}] mapped {len(r)} / {len(nodes)} FlyVis cells, median dist "
-          f"{r.dist_columns.median():.2f} columns")
+    summary = result.groupby(["flyvis_type", "eye"]).size().unstack(fill_value=0)
+    summary["flyvis_cells"] = nodes.flyvis_type.value_counts()
+    print(summary.to_string())
+    for side in ("right", "left"):
+        r = result[result.eye == side]
+        print(f"[{side}] mapped {len(r)} / {len(nodes)} FlyVis cells, median dist "
+              f"{r.dist_columns.median():.2f} columns, placed by skeleton "
+              f"{(r.placed_by == 'skeleton').mean():.0%}")
+
+
+if __name__ == "__main__":
+    main()

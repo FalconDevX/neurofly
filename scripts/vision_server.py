@@ -4,8 +4,11 @@
     python scripts/vision_server.py --mode activity      # sama aktywność BANC (dla Osoby 2)
     python scripts/vision_server.py --no-fisheye         # klatki już równokątne (FakeStereoCamera)
 
-Tryb command kalibruje kontroler na syntetycznych scenach (FakeStereoCamera: cel na wprost
-i ±60°), bo serwer nie ma dostępu do renderera symulatora. To rozwiązanie tymczasowe.
+Tryb command na starcie kalibruje kontroler na syntetycznych scenach (FakeStereoCamera: cel
+na wprost i ±60°). Symulator powinien zaraz potem wysłać żądanie ``calibrate`` ze scenami
+z MuJoCo (``VisionClient.calibrate``): jasność i tekstury sceny przesuwają punkt odniesienia
+dekodera, więc kalibracja syntetyczna nie pasuje do symulatora (np. thrust stoi na 0).
+Każda odpowiedź ma pole ``calibration``: "synthetic" albo "sim".
 """
 
 from __future__ import annotations
@@ -22,27 +25,32 @@ import zmq
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from banc_control import ImuState  # noqa: E402
 from visual_pipeline import VisionBridge  # noqa: E402
-from visual_pipeline.zmq_protocol import DEFAULT_ADDRESS, decode_request  # noqa: E402
+from visual_pipeline.zmq_protocol import (  # noqa: E402
+    CALIBRATION_BEARING_DEG,
+    CALIBRATION_SCENES,
+    DEFAULT_ADDRESS,
+    decode_message,
+)
 
 
-def calibrated_controller(bridge: VisionBridge):
-    from banc_control import BancController, Connectome
+def calibrate(ctrl, bridge: VisionBridge, scenes: dict) -> float:
+    """Kalibracja jak w docs/osoba2-plan.md: zawis na scenie neutralnej, skala na celu ±60°.
+
+    ``scenes``: {"rest" | "left" | "right": (lewa, prawa)}. Zwraca znak sprzężenia halter.
+    """
+    responses = {name: bridge.settle(*frames) for name, frames in scenes.items()}
+    ctrl.calibrate_rest(30, visual=responses["rest"])
+    ctrl.calibrate_scale([responses["left"], responses["right"]])
+    sign = ctrl.calibrate_haltere_sign(responses["rest"])
+    bridge.reset()
+    return sign
+
+
+def synthetic_scenes() -> dict:
     from visual_pipeline.fake_camera import FakeStereoCamera
 
-    ctrl = BancController(Connectome.from_banc())
     cam = FakeStereoCamera(beacon_azimuth=0.0)
-    fisheye, bridge.fisheye = bridge.fisheye, False  # syntetyczne klatki są już równokątne
-    try:
-        def scene(deg):
-            return bridge.settle(*cam.render(yaw=-np.deg2rad(deg)))
-
-        neutral = scene(0)
-        ctrl.calibrate_rest(30, visual=neutral)
-        ctrl.calibrate_scale([scene(-60), scene(60)])
-        ctrl.calibrate_haltere_sign(neutral)
-    finally:
-        bridge.fisheye = fisheye
-    return ctrl
+    return {name: cam.render(yaw=-np.deg2rad(CALIBRATION_BEARING_DEG[name])) for name in CALIBRATION_SCENES}
 
 
 def main() -> None:
@@ -55,7 +63,17 @@ def main() -> None:
 
     t0 = time.perf_counter()
     bridge = VisionBridge(fps=args.fps, fisheye=not args.no_fisheye)
-    ctrl = calibrated_controller(bridge) if args.mode == "command" else None
+    ctrl, calibration = None, None
+    if args.mode == "command":
+        from banc_control import BancController, Connectome
+
+        ctrl = BancController(Connectome.from_banc())
+        fisheye, bridge.fisheye = bridge.fisheye, False  # syntetyczne klatki są już równokątne
+        try:
+            calibrate(ctrl, bridge, synthetic_scenes())
+        finally:
+            bridge.fisheye = fisheye
+        calibration = "synthetic"
     sock = zmq.Context.instance().socket(zmq.REP)
     sock.bind(args.address)
     print(f"serwer wzroku ({args.mode}) gotowy na {args.address} po {time.perf_counter() - t0:.0f} s, "
@@ -64,7 +82,21 @@ def main() -> None:
     bridge.reset()
     n = 0
     while True:
-        left, right, imu, reset = decode_request(sock.recv_multipart())
+        header, frames = decode_message(sock.recv_multipart())
+        if "calibrate" in header:
+            if ctrl is None:
+                sock.send_string(json.dumps({"error": "kalibracja tylko w trybie command"}))
+                continue
+            t = time.perf_counter()
+            scenes = {name: (frames[2 * i], frames[2 * i + 1]) for i, name in enumerate(header["calibrate"])}
+            sign = calibrate(ctrl, bridge, scenes)
+            calibration = "sim"
+            print(f"kalibracja na scenach z symulatora: {time.perf_counter() - t:.1f} s, "
+                  f"znak halter {sign:+.0f}", flush=True)
+            sock.send_string(json.dumps({"calibration": calibration, "haltere_sign": sign}))
+            continue
+        left, right = frames
+        imu, reset = header.get("imu"), bool(header.get("reset", False))
         t = time.perf_counter()
         if reset:
             bridge.reset()
@@ -83,7 +115,7 @@ def main() -> None:
             timing["total"] = round((time.perf_counter() - t) * 1e3, 2)
             sock.send_string(json.dumps({"thrust": cmd.thrust, "roll": cmd.roll, "pitch": cmd.pitch,
                                          "yaw": cmd.yaw, "unmatched_ids": ctrl.unmatched_ids,
-                                         "timing_ms": timing}))
+                                         "calibration": calibration, "timing_ms": timing}))
         n += 1
         if n % 300 == 0:
             print(f"{n} klatek, ostatnia {timing['total']} ms", flush=True)
