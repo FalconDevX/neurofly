@@ -95,7 +95,8 @@ def main():
 
     obs, info = env.reset(seed=args.seed)
     world = info["world_seed"]
-    viewer = mujoco.viewer.launch_passive(env.model, env.data, key_callback=on_key)
+    viewer = mujoco.viewer.launch_passive(env.model, env.data, key_callback=on_key,
+                                          show_right_ui=banc is None)  # panel BANC przy prawej krawędzi
     camera_locked = True
     set_camera_lock(viewer, env.model, camera_locked)
     viewer.cam.distance = CHASE_DISTANCE

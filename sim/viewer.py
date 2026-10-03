@@ -189,10 +189,11 @@ class Overlays:
                 self.eyes_image = np.hstack([left, gap, right])
             images.append((mujoco.MjrRect(view.left, view.bottom, 2 * width + 4, height), self.eyes_image))
         if self.brain is not None and self.brain.image is not None:
-            # panel sieci: prawy górny róg, ~1/3 szerokości, nad strzałką wiatru
+            # panel sieci przy prawej krawędzi okna (panel ustawień MuJoCo schowany, Shift+Tab go przywraca),
+            # na całą wysokość nad strzałką wiatru, najwyżej 40% szerokości sceny
             img = self.brain.image
             free_height = view.height - (WIND_SIZE + 8 if wind.enabled else 0)
-            w = int(min(view.width // 3, free_height * img.shape[1] / img.shape[0]))
+            w = int(min(view.width * 0.4, free_height * img.shape[1] / img.shape[0]))
             h = round(w * img.shape[0] / img.shape[1])
             if w >= 120:
                 images.append((mujoco.MjrRect(view.left + view.width - w, view.bottom + view.height - h, w, h),
@@ -292,7 +293,9 @@ def main():
     resettables = (props, stabilizer, crash)
     reset_to_start(model, data, key_id, *resettables)
 
-    with mujoco.viewer.launch_passive(model, data, key_callback=controls.on_key) as viewer:
+    # z panelem sieci chowamy prawy panel ustawień MuJoCo, żeby panel sieci stał przy prawej krawędzi okna
+    with mujoco.viewer.launch_passive(model, data, key_callback=controls.on_key,
+                                      show_right_ui=brain is None) as viewer:
         camera_locked = True
         set_camera_lock(viewer, model, camera_locked)
         viewer.cam.distance = CHASE_DISTANCE

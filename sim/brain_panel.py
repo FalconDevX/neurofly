@@ -25,7 +25,9 @@ import cv2
 import numpy as np
 
 VOXEL_NM = np.array([4.0, 4.0, 45.0])
-BG = np.array([14, 17, 22], np.float32)  # tło panelu (RGB)
+BG = np.array([9, 9, 11], np.float32)  # tło panelu (RGB), zinc-950 jak w eksploratorze
+UP = np.array([251, 113, 133], np.float32)    # rose-400: wzrost aktywności
+DOWN = np.array([96, 165, 250], np.float32)   # blue-400: spadek
 BARS = (  # (etykieta, grupa bez _L/_R)
     ("wzrok (VPN)", "visual"),
     ("DN sterujace", "dn_flight_steering"),
@@ -129,7 +131,7 @@ class BrainPanel:
         img = np.empty((SCATTER_H + BARS_H, SCATTER_W, 3), np.uint8)
         img[:] = BG.astype(np.uint8)
         text = self.status.encode("ascii", "replace").decode()
-        cv2.putText(img, text[:48], (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 205, 215), 1, cv2.LINE_AA)
+        cv2.putText(img, text[:48], (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (250, 250, 250), 1, cv2.LINE_AA)
         return img
 
 
@@ -158,7 +160,7 @@ class BrainView:
         density = np.bincount(self._pix, minlength=SCATTER_W * SCATTER_H).astype(np.float32)
         self._count = np.maximum(density, 1.0)
         gray = np.log1p(density) / np.log1p(density.max())
-        self._base = (BG + gray[:, None] * np.array([70, 78, 92], np.float32)).reshape(SCATTER_H, SCATTER_W, 3)
+        self._base = (BG + gray[:, None] * np.array([82, 82, 91], np.float32)).reshape(SCATTER_H, SCATTER_W, 3)  # zinc
         flight = np.flatnonzero((c.groups != "") & ok)
         self._flight = flight
         fx, fy = px[flight].astype(int), py[flight].astype(int)
@@ -184,10 +186,13 @@ class BrainView:
         img = _tint(self._base, val.reshape(SCATTER_H, SCATTER_W), strength=4.0)
         img[self._flight_yy, self._flight_xx] = _colors(rel[self._flight])[:, None, None]  # grupy lotu: większe kropki
         scatter = np.clip(img, 0, 255).astype(np.uint8)
+        scatter[:24] = BG.astype(np.uint8)  # paski pod napisami, żeby nie nachodziły na neurony
+        scatter[SCATTER_H - 22:] = BG.astype(np.uint8)
+        scatter[24] = scatter[SCATTER_H - 23] = (39, 39, 42)  # linia zinc-800
         cv2.putText(scatter, "BANC v888 - widok z przodu", (8, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.42,
-                    (200, 205, 215), 1, cv2.LINE_AA)
-        cv2.putText(scatter, "czerwony = wzrost, niebieski = spadek", (8, SCATTER_H - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (150, 155, 165), 1, cv2.LINE_AA)
+                    (250, 250, 250), 1, cv2.LINE_AA)
+        cv2.putText(scatter, "rozowy = wzrost, niebieski = spadek", (8, SCATTER_H - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (161, 161, 170), 1, cv2.LINE_AA)
         return np.vstack([scatter, self._bars(rates, cmd, ms)])
 
     def _bars(self, rates: np.ndarray, cmd, ms: float | None) -> np.ndarray:
@@ -196,7 +201,7 @@ class BrainView:
         means = {g: float(rates[i].mean()) if len(i) else 0.0 for g, i in self._group_idx.items()}
         if self._group_ref is None:
             self._group_ref = dict(means)
-        font, white, dim = cv2.FONT_HERSHEY_SIMPLEX, (215, 220, 228), (130, 136, 148)
+        font, white, dim = cv2.FONT_HERSHEY_SIMPLEX, (250, 250, 250), (161, 161, 170)
         cv2.putText(img, "L", (150, 14), font, 0.4, dim, 1, cv2.LINE_AA)
         cv2.putText(img, "P", (268, 14), font, 0.4, dim, 1, cv2.LINE_AA)
         y = 22
@@ -225,22 +230,23 @@ class BrainView:
 def _colors(v: np.ndarray) -> np.ndarray:
     """Kolory neuronów grup lotu: szary → czerwony (wzrost) / niebieski (spadek)."""
     a = np.minimum(np.abs(v), 1.0)[:, None]
-    hot = np.where(v[:, None] > 0, np.array([255.0, 80, 60]), np.array([70.0, 140, 255]))
-    return np.array([150.0, 155, 165]) * (1 - a) + hot * a
+    hot = np.where(v[:, None] > 0, UP, DOWN)
+    return np.array([161.0, 161, 170]) * (1 - a) + hot * a
 
 
 def _tint(base: np.ndarray, val: np.ndarray, strength: float) -> np.ndarray:
     a = np.clip(np.abs(val) * strength, 0, 1)[..., None]
-    hot = np.where(val[..., None] > 0, np.array([255, 80, 60], np.float32), np.array([70, 140, 255], np.float32))
+    hot = np.where(val[..., None] > 0, UP, DOWN)
     return base * (1 - a) + hot * a
 
 
 def _hbar(img: np.ndarray, x: int, y: int, w: int, h: int, v: float) -> None:
     """Pasek od środka: w prawo dla v > 0 (czerwony), w lewo dla v < 0 (niebieski)."""
-    cv2.rectangle(img, (x, y), (x + w, y + h), (45, 50, 60), -1)
+    cv2.rectangle(img, (x, y), (x + w, y + h), (24, 24, 27), -1)  # zinc-900
+    cv2.rectangle(img, (x, y), (x + w, y + h), (39, 39, 42), 1)   # ramka zinc-800
     mid = x + w // 2
     end = int(mid + v * (w // 2))
     if end != mid:
         cv2.rectangle(img, (min(mid, end), y + 1), (max(mid, end), y + h - 1),
-                      (230, 90, 70) if v > 0 else (80, 150, 240), -1)
-    cv2.line(img, (mid, y), (mid, y + h), (120, 125, 135), 1)
+                      tuple(int(c) for c in (UP if v > 0 else DOWN)), -1)
+    cv2.line(img, (mid, y), (mid, y + h), (82, 82, 91), 1)
