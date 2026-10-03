@@ -12,7 +12,7 @@ from flygym.vision.retina import Retina
 from banc_control.contracts import BancActivation, VisualBatch
 
 from .flyvis_step import FlyVisStepper
-from .frames import prepare_frame
+from .frames import prepare_frame, to_luminance
 from .retina_mapper import RetinaMapper
 
 MAP_FILE = Path(__file__).with_name("flyvis_banc_map.csv")
@@ -27,7 +27,10 @@ class VisionBridge:
     dostaje ich średnią.
     """
 
-    def __init__(self, fps: float = 30.0, map_file: str | Path = MAP_FILE) -> None:
+    def __init__(self, fps: float = 30.0, map_file: str | Path = MAP_FILE, fisheye: bool = False) -> None:
+        """``fisheye=True`` dla surowych kamer MuJoCo (``drone_eyes``): ``Retina.correct_fisheye``
+        jak w FlyGym. ``FakeStereoCamera`` renderuje już równokątnie, więc tam False."""
+        self.fisheye = fisheye
         self.retina = Retina()
         self.mapper = RetinaMapper()
         self.stepper = FlyVisStepper(fps=fps)
@@ -56,7 +59,9 @@ class VisionBridge:
     def step_arrays(self, frame_left: np.ndarray, frame_right: np.ndarray) -> np.ndarray:
         """Szybka ścieżka: aktywność w kolejności ``self.root_ids`` / ``self.cell_types``."""
         t0 = time.perf_counter()
-        frame_left, frame_right = prepare_frame(frame_left), prepare_frame(frame_right)
+        frame_left, frame_right = to_luminance(prepare_frame(frame_left)), to_luminance(prepare_frame(frame_right))
+        if self.fisheye:
+            frame_left, frame_right = self.retina.correct_fisheye(frame_left), self.retina.correct_fisheye(frame_right)
         lum = np.stack([self.mapper.to_flyvis(self.retina.raw_image_to_hex_pxls(f), eye)
                         for f, eye in zip((frame_left, frame_right), EYES)])
         t1 = time.perf_counter()

@@ -23,3 +23,18 @@ def prepare_frame(img: np.ndarray) -> np.ndarray:
     if img.shape != RETINA_SHAPE:
         img = np.asarray(Image.fromarray(img).resize((RETINA_SHAPE[1], RETINA_SHAPE[0]), Image.BILINEAR))
     return img
+
+
+def to_luminance(img: np.ndarray) -> np.ndarray:
+    """RGB → szara luminancja powielona na 3 kanały.
+
+    Retina czyta w każdym omatidium tylko kanał G albo B (typ yellow/pale). W kolorowej
+    scenie (np. niebieskawe niebo MuJoCo) sąsiednie omatidia różnią się wtedy jasnością
+    i FlyVis dostaje fałszywy kontrast w szachownicę. FlyVis był trenowany na luminancji.
+    """
+    # Wagi BT.601 ×256 w liczbach całkowitych: ~5× szybciej niż float32 @ wagi.
+    r, g, b = (img[..., i].astype(np.uint16) for i in range(3))
+    lum = ((77 * r + 150 * g + 29 * b) >> 8).astype(np.uint8)
+    out = np.empty(img.shape[:2] + (3,), np.uint8)
+    out[..., 0] = out[..., 1] = out[..., 2] = lum
+    return out
