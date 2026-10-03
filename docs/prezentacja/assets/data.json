@@ -10,5 +10,132 @@
   "-30": 3.0532383197834436,
   "+30": 2.3169210220722825,
   "+60": 5.08966065763242
+ },
+ "world": {
+  "evals": [
+   {
+    "tag": "before",
+    "after_episodes": 0,
+    "reached": 0,
+    "n": 6,
+    "mean_min_dist": 18.219989076225705
+   },
+   {
+    "tag": "mid@50",
+    "after_episodes": 50,
+    "reached": 3,
+    "n": 6,
+    "mean_min_dist": 2.357809812125339
+   },
+   {
+    "tag": "mid@100",
+    "after_episodes": 100,
+    "reached": 5,
+    "n": 6,
+    "mean_min_dist": 2.134326691602517
+   },
+   {
+    "tag": "mid@150",
+    "after_episodes": 150,
+    "reached": 3,
+    "n": 6,
+    "mean_min_dist": 2.522325667876448
+   },
+   {
+    "tag": "mid@200",
+    "after_episodes": 200,
+    "reached": 5,
+    "n": 6,
+    "mean_min_dist": 2.1506590314508163
+   },
+   {
+    "tag": "mid@250",
+    "after_episodes": 250,
+    "reached": 5,
+    "n": 6,
+    "mean_min_dist": 2.1700658323701956
+   },
+   {
+    "tag": "after",
+    "after_episodes": 300,
+    "reached": 4,
+    "n": 6,
+    "mean_min_dist": 2.167820708460732
+   }
+  ],
+  "best": {
+   "tag": "mid@100",
+   "reached": 5,
+   "mean_min_dist": 2.134326691602517
+  },
+  "blocks": [
+   {
+    "from": 0,
+    "n": 50,
+    "reached": 48,
+    "beta": 0.8366666666666667,
+    "min_dist": 2.0800817475113744
+   },
+   {
+    "from": 50,
+    "n": 50,
+    "reached": 48,
+    "beta": 0.5033333333333334,
+    "min_dist": 1.8398764122887417
+   },
+   {
+    "from": 100,
+    "n": 50,
+    "reached": 48,
+    "beta": 0.17,
+    "min_dist": 1.5030867610742384
+   },
+   {
+    "from": 150,
+    "n": 50,
+    "reached": 44,
+    "beta": 0.0,
+    "min_dist": 1.6334522043114643
+   },
+   {
+    "from": 200,
+    "n": 50,
+    "reached": 47,
+    "beta": 0.0,
+    "min_dist": 1.8127574679807879
+   },
+   {
+    "from": 250,
+    "n": 50,
+    "reached": 47,
+    "beta": 0.0,
+    "min_dist": 1.6354252295024827
+   }
+  ],
+  "workers": {
+   "LenovoLegion5": {
+    "episodes": 194,
+    "gpu": "RTX 4060"
+   },
+   "DESKTOP-UIRDSBJ": {
+    "episodes": 106,
+    "gpu": "RTX 3070 Ti"
+   }
+  },
+  "episodes": 300,
+  "reached_all": 282,
+  "flips": 3,
+  "model_only": {
+   "n": 150,
+   "reached": 138
+  },
+  "args": {
+   "beacon_scale": 4.0,
+   "vision_range": 4.0,
+   "sensors": "real",
+   "motor_tau": 0.04,
+   "max_time": 40.0,
+   "readout": "dn"
+  }
  }
 }

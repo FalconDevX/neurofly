@@ -58,9 +58,12 @@ wizualizację — została odrzucona („pseudo sieć, nie przypomina BANC”) i
   `scripts/train_distributed.py` — to samo na kilku GPU w LAN (master + workerzy ZMQ; worker sprawdza CUDA).
   Master czeka na `--workers` (domyślnie 2) zgłoszeń `ping` przez `--wait-join` s i na ich gotowość przez `--wait-ready` s;
   jeśli slave nie odpowiada — przerwanie (workerzy dostają `stop`, nic nie zapisane, kod 1).
-- `sim/brain_panel.py` — `python -m sim.viewer --brain [--brain-decoder …]` (.venv312): przy locie WASD prawy panel
-  z BANC na żywo (somy z przodu kolorowane zmianą aktywności, grupy lotu L/P, komenda dekodera); sieć nie steruje.
-  Rysowanie: `BrainView`, też w wideo: `fly_banc.py --local --brain --video …` (dron + oczy + panel BANC).
+- `sim/brain_panel.py` — panel BANC na żywo (`BrainView`, po angielsku, Roboto przez PIL, statyczne napisy rysowane raz, ~9 ms/klatkę):
+  mapa som (mózg z lewej, VNC z prawej) z siłą sygnału w jednej barwie (zmiana wobec ~2 s, skala = wygładzony 99. percentyl),
+  „Signal strength” L/P grup wzrok → DN → MN → haltery (% od startu epizodu; mianownik ≥ 10 % szczytu grupy),
+  „How the drone is steered”: udział BANC / GPS w kursie, głosy neuronów lewo/prawo (wagi yaw × cechy, `steer_from_decoder`),
+  yaw z BANC / GPS / wynikowy, thrust/roll/pitch ze źródłem. Pilot (`sim/banc_pilot.py`) podaje `steer` i czas klatki.
+  `python -m sim.viewer --brain [--brain-decoder …]` — sieć tylko obserwuje (WASD); wideo: `fly_banc.py --local --brain --video …`.
 
 Integracja (w `visual_pipeline/`, ale wspólna z Osobą 2 i 3):
 - `zmq_protocol.py` — protokół symulator ↔ serwer (REQ/REP, `[nagłówek JSON, klatka L, klatka P]`), lekki (numpy + pyzmq).
@@ -174,7 +177,7 @@ Dane: `npm run dev` / `build` uruchamia `scripts/sync-data.mjs`, który kopiuje 
 
 ## Uwagi do repo
 
-- `docs/prezentacja/`: NeuroFly.pptx (15 slajdów, ciemny minimalistyczny styl, rendery 3D z BANC v888 i MuJoCo, liczby z v888 i treningu). `render_assets.py` (.venv312) → `assets/`, `node build.js` (pptxgenjs) → .pptx.
+- `docs/prezentacja/`: NeuroFly.pptx (28 slajdów, po angielsku, prostym językiem, styl plakatu: Michroma + Roboto, czerwony akcent). Kolejność: pomysł → „How it works” krok po kroku według 8 kroków pętli (slajd 4) → wyniki → szczerość → co dalej / podziękowanie → Appendix ze szczegółami (wzór, kalibracja, haltery, czujniki, luka lewego oka, nauczyciel, szybkość). Bez strzałek, kropek, punktorów i „·”; objaśnienia skrótów w kolumnach (`gloss`), na slajdzie 3 na górze. Slajd tytułowy: render `fly_drone` (muszka + szklany X2 z MuJoCo + nitki od neuronów lotu, nitki ilustracyjne). `render_assets.py` (.venv312) → `assets/` + `data.json`, `NODE_PATH=<pptxgenjs> node build.js` → .pptx, `embed_fonts.ps1` osadza fonty (zamyka PowerPointa!).
 
 - CI: `.github/workflows/tests.yml` — pytest (bez GPU/FlyVis/danych BANC, te testy się pomijają) i typy eksploratora.
 - Uruchamianie: torch z CUDA, potem `pip install -e .[all]` (extras: `vision`, `sim`, `dev`), `python scripts/download_banc.py`, `flyvis download-pretrained`, `pytest`.

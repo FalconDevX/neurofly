@@ -54,7 +54,7 @@ def brain_frame(frame: np.ndarray, view, ctrl, reply: dict, scenario: str, info:
     import cv2
     from types import SimpleNamespace
 
-    panel = view.render(ctrl.dyn.rates_at(np.arange(ctrl.c.n)), SimpleNamespace(**reply))
+    panel = view.render(ctrl.dyn.rates_at(np.arange(ctrl.c.n)), SimpleNamespace(**reply), steer={"mode": "flying"})
     h = frame.shape[0]
     panel = cv2.resize(panel, (round(panel.shape[1] * h / panel.shape[0]), h), interpolation=cv2.INTER_AREA)
     out = np.concatenate([frame, panel], axis=1)

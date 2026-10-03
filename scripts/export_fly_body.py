@@ -2,8 +2,7 @@
 
     python scripts/export_fly_body.py        # .venv312 → data/viz/fly_body.bin + fly_body.json
 
-Model: oficjalne siatki NeuroMechFly (flygym, ≤ 2000 ścian na część), poza spoczynkowa (keyframe „neutral”, jeśli
-jest). Dopasowanie do BANC v888 jest ILUSTRACYJNE: obrót tak, jak ułożony jest preparat BANC (głowa do góry,
+Model: oficjalne siatki NeuroMechFly (flygym, ≤ 2000 ścian na część), poza spoczynkowa nóg (preset NEUTRAL, keyframe „neutral”). Dopasowanie do BANC v888 jest ILUSTRACYJNE: obrót tak, jak ułożony jest preparat BANC (głowa do góry,
 strona brzuszna do widza, prawa strona muchy po lewej stronie ekranu), skala i przesunięcie tak, żeby środek głowy
 trafił w środek mózgu BANC, a środek tułowia w środek VNC. W BANC łącznik szyjny jest rozciągnięty (preparat
 wyjęty z ciała), więc anatomiczna zgodność jest przybliżona.
@@ -37,10 +36,15 @@ def main() -> None:
     import mujoco
     import pandas as pd
 
-    from flygym.compose import Fly
+    from flygym.anatomy import JointPreset, Skeleton
+    from flygym.compose import Fly, KinematicPosePreset
 
     warnings.filterwarnings("ignore")
-    m = Fly().compile()[0]
+    fly = Fly()
+    # stawy nóg w pozie spoczynkowej NeuroMechFly (stoi na 6 nogach); bez stawów nogi były proste, w kącie 0°
+    fly.add_joints(Skeleton(axis_order="pitch_roll_yaw", joint_preset=JointPreset.LEGS_ONLY),
+                   neutral_pose=KinematicPosePreset.NEUTRAL)
+    m = fly.compile()[0]
     d = mujoco.MjData(m)
     if m.nkey and "neutral" in [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_KEY, k) for k in range(m.nkey)]:
         mujoco.mj_resetDataKeyframe(m, d, m.key("neutral").id)
