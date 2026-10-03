@@ -42,7 +42,7 @@ const MONO = "Consolas";
 const pres = new pptxgen();
 pres.layout = "LAYOUT_16x9"; // 10 × 5.625 in
 pres.theme = { headFontFace: THEME.headFontFace, bodyFontFace: THEME.bodyFontFace };
-pres.title = "NeuroFly — a fruit-fly brain flies a drone";
+pres.title = "NeuroFly — the brain of a fruit fly pilots a drone";
 pres.author = "NeuroFly team";
 
 // ---------- układy (layouts) ----------
@@ -141,7 +141,7 @@ pres.addSection({ title: "Start" });
   eyebrow(s, "BANC v888 connectome", 0.6, 1.78, 5.2, RED, "eyebrow");
   text(s, "NEUROFLY", { x: 0.6, y: 2.05, w: 5.2, h: 0.85, fontSize: 40, fontFace: HEAD, charSpacing: 2, objectName: "title" });
   s.addImage({ path: A("accent_line.png"), x: 0.6, y: 3.05, w: 0.05, h: 0.95, objectName: "accent-line" });
-  text(s, "A fruit-fly brain\nflies a drone", { x: 0.85, y: 3.05, w: 3.0, h: 0.8, fontSize: 18, color: T.lt2, objectName: "subtitle" });
+  text(s, "The brain of a fruit fly\npilots a drone", { x: 0.85, y: 3.05, w: 3.0, h: 0.8, fontSize: 18, color: T.lt2, objectName: "subtitle" });
   text(s, "FULL BANC V888 CONNECTOME      175,401 NEURONS      CLOSED LOOP IN MUJOCO", {
     x: 0.6, y: 4.75, w: 8.8, h: 0.3, fontSize: 8, color: T.lt2, charSpacing: 4, objectName: "footer",
   });
