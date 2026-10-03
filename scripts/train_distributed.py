@@ -240,8 +240,15 @@ def run_worker(args) -> None:
                  "albo uruchom z --cpu.")
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
 
+    try:  # literówka typu "127.0.0." — ZMQ czekałby po cichu
+        socket.getaddrinfo(args.host, args.port)
+        if args.host.count(".") == 3 and not all(p.isdigit() for p in args.host.split(".")):
+            raise OSError
+    except OSError:
+        sys.exit(f"[{name}] zły adres mastera --host {args.host!r} (np. 127.0.0.1 albo 192.168.50.1)")
+    print(f"[{name}] łączę z masterem {args.host}:{args.port}…", flush=True)
     sock = zmq.Context.instance().socket(zmq.REQ)
-    sock.setsockopt(zmq.RCVTIMEO, 60_000)
+    sock.setsockopt(zmq.RCVTIMEO, 15_000)  # zgłoszenie: master odpowiada od razu
     sock.setsockopt(zmq.LINGER, 0)
     sock.connect(f"tcp://{args.host}:{args.port}")
 
@@ -250,13 +257,15 @@ def run_worker(args) -> None:
         try:
             return json.loads(sock.recv())
         except zmq.Again:
-            sys.exit(f"[{name}] master {args.host}:{args.port} nie odpowiada od 60 s — przerywam")
+            sys.exit(f"[{name}] master {args.host}:{args.port} nie odpowiada — przerywam "
+                     "(sprawdź adres, czy master działa i zaporę na porcie)")
 
     # zgłoszenie przed wczytaniem BANC: master od razu wie, czy ten komputer jest osiągalny
     reply = send({"type": "ping", "name": host, "gpu": gpu})
     if reply["kind"] == "stop":
         sys.exit(f"[{name}] master przerwał: {reply.get('error', '')}")
     print(f"[{name}] połączony z masterem {args.host}:{args.port}, ładuję BANC…", flush=True)
+    sock.setsockopt(zmq.RCVTIMEO, 60_000)
 
     t0 = time.perf_counter()
     env, bridge, ctrl, calib = build(args.plan, args.lr, args.noise, args.reward_lr, args.thrust,

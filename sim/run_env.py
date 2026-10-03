@@ -3,6 +3,7 @@
     python -m sim.run_env                      # Ty sterujesz przez WorldEnv (tak jak będzie sterował model)
     python -m sim.run_env --seed 7             # konkretny świat
     python -m sim.run_env --model pakiet.modul:funkcja   # gdy będzie model: funkcja(obs) -> akcja
+    python -m sim.run_env --banc data/decoders/planB_dn.npz   # BANC + dekoder pilotuje (.venv312), panel sieci
 
 Bez --model dron NIE leci sam: akcję daje klawiatura (bez klawiszy = ciąg zawisu, zero obrotu),
 a start jest w idealnym zawisie (--start-noise włącza losowe zaburzenie startu, jak przy uczeniu).
@@ -24,6 +25,7 @@ testów; jej wynik też idzie do WorldEnv jako zwykła akcja. Model jej nie dost
 """
 
 import argparse
+from pathlib import Path
 import importlib
 import time
 
@@ -62,6 +64,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--seed", type=int, default=None, help="ziarno świata (domyślnie losowe)")
     parser.add_argument("--model", default=None, help="pakiet.modul:funkcja — funkcja(obs) -> akcja; bez tego klawiatura")
+    parser.add_argument("--banc", type=Path, default=None,
+                        help="wagi dekodera (train_decoder.py): pilotem jest BANC (sim/banc_pilot.py)")
+    parser.add_argument("--banc-forward", type=float, default=1.0, help="m/s do przodu z --banc")
+    parser.add_argument("--beacon-scale", type=float, default=1.0, help="z --banc: grubszy maszt celu (w pamięci)")
     parser.add_argument("--wind-speed", type=float, default=8.0, help="średnia prędkość wiatru [m/s] (CapsLock)")
     parser.add_argument("--start-noise", action="store_true",
                         help="losowy przechył/prędkość na starcie (jak przy uczeniu); domyślnie start w idealnym zawisie")
@@ -71,6 +77,12 @@ def main():
 
     policy = load_model(args.model) if args.model else None
     env = WorldEnv(control=args.control, start_noise=args.start_noise, wind_speed=args.wind_speed)
+    if args.banc:
+        from sim.banc_pilot import BancPilot
+
+        policy = BancPilot(args.banc, args.banc_forward, beacon_scale=args.beacon_scale)
+        env.reset(seed=args.seed)
+        policy.bind(env)  # kalibracja zmienia stan env — dlatego reset poniżej
     keyboard = FlightKeyboard()
     stabilizer = VelocityController(env.rate_ctrl)
     stabilized = False
@@ -85,9 +97,12 @@ def main():
     viewer.cam.distance = CHASE_DISTANCE
     follow_drone(viewer, env.data, env.drone_id, snap=True)
     props = PropellerVisuals(env.model)
-    overlays = Overlays(env.model)
+    overlays = Overlays(env.model, policy if hasattr(policy, "image") else None)  # panel BANC przy --banc
     print(__doc__)
-    print(f"sterowanie: {'model ' + args.model if policy else 'klawiatura (bez modelu dron sam nie leci)'}")
+    print(f"sterowanie: {'BANC ' + str(args.banc) if args.banc else 'model ' + args.model if policy else 'klawiatura (bez modelu dron sam nie leci)'}")
+    reset_policy = getattr(policy, "reset", None)  # BancPilot: stan sieci od nowa po każdym resecie świata
+    if reset_policy:
+        reset_policy(obs)
     print(f"świat {world}, cel {info['distance']:.1f} m od startu")
 
     total, steps, t0 = 0.0, 0, time.perf_counter()
@@ -108,6 +123,8 @@ def main():
             requests["reset"] = False
             with viewer.lock():
                 obs, info = env.reset(options={} if new_world else {"world_seed": world})
+            if reset_policy:
+                reset_policy(obs)
             world = info["world_seed"]
             stabilizer.z_ref = None
             viewer.update_hfield(env.model.hfield("terrain").id)
@@ -133,6 +150,8 @@ def main():
                   f"odległość do celu {info['distance']:.1f} m — od nowa w tym samym świecie")
             with viewer.lock():
                 obs, info = env.reset(options={"world_seed": world})
+            if reset_policy:
+                reset_policy(obs)
             stabilizer.z_ref = None
             total, steps, t0 = 0.0, 0, time.perf_counter()
     keyboard.close()
