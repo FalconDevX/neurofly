@@ -3,10 +3,10 @@
 Interfejs zespołu (ustalony z Osobą 2): RateCommand = ciąg zbiorczy + zadane prędkości kątowe
 w układzie drona. RateController zamienia je na siły 4 silników (PID prędkości + mixer).
 
-Do ręcznego latania jest nad tym kaskada VelocityController:
-prędkość zadana (w układzie kursu) -> przechylenie -> prędkości kątowe -> RateController.
-Używa prawdziwej prędkości i pozycji z symulatora, więc służy tylko do podglądu/testów,
-nie jako wejście dla sieci.
+RateController nie stabilizuje: tylko realizuje zadane prędkości kątowe (przy zerze dron przestaje
+się obracać, ale zostaje w bieżącym przechyle) — stabilizacji ma się nauczyć model.
+VelocityController (autostabilizacja: poziomowanie, hamowanie, trzymanie wysokości) służy tylko
+do ręcznych testów w podglądzie i jest włączany Altem.
 
 Układ drona: x do przodu, y w lewo, z w górę. Dodatni pitch = nos w dół (lot do przodu),
 dodatni roll = przechył w prawo (lot w prawo, czyli w -y).
@@ -89,9 +89,10 @@ class RateController:
 
 
 class VelocityController:
-    """Ręczne latanie: prędkość zadana w układzie kursu + prędkość odchylenia -> RateCommand.
+    """Autostabilizacja do ręcznych testów (Alt w podglądzie): prędkość zadana -> RateCommand.
 
-    Po puszczeniu klawiszy (prędkości 0) dron hamuje i trzyma wysokość.
+    Po puszczeniu klawiszy (prędkości 0) dron hamuje i trzyma wysokość. Używa prawdziwego stanu
+    z symulatora, więc nie jest częścią pętli modelu — tam idzie sam RateController.
     """
 
     def __init__(self, rate_ctrl: RateController, max_tilt=np.deg2rad(25),

@@ -20,7 +20,7 @@ Hackathon: zamknięta pętla wzrok → connectome Drosophila → sterowanie → 
 ```bash
 pip install -r requirements.txt          # banc_control + MuJoCo (domyślnie)
 python scripts/fetch_menagerie.py        # model drona Skydio X2 → third_party/
-python -m sim.viewer                     # dron Osoby 3: łopaty, regulator, WASD/Shift/Ctrl/Q/E
+python -m sim.viewer                     # dron Osoby 3: WASD/Shift/Ctrl/Q/E, Alt = stabilizacja wł./wył.
 python scripts/download_banc.py          # dane BANC v888 → data/
 ```
 

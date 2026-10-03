@@ -6,7 +6,7 @@ na czarnym tle migały, zanim pętla zdążyła przywrócić flagi. Dlatego klaw
 przechwytujemy niskopoziomowym hookiem Windows (WH_KEYBOARD_LL / WH_MOUSE_LL), gdy aktywne jest
 okno MuJoCo: zdarzenie nie dociera do podglądu, a stan trzymamy sami.
 
-Na innych systemach ręczne latanie jest wyłączone (dron trzyma zawis).
+Na innych systemach ręczne latanie jest wyłączone (stały ciąg zawisu, zero prędkości kątowych).
 """
 
 import ctypes
@@ -14,14 +14,18 @@ import sys
 import threading
 from ctypes import wintypes
 
+from sim.control import RateCommand
+
 WINDOW_TITLE_PREFIX = "MuJoCo"
 
 VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL = 0xA0, 0xA1, 0xA2, 0xA3
-VK_SHIFT, VK_CONTROL = 0x10, 0x11
-VK_A, VK_D, VK_E, VK_L, VK_Q, VK_S, VK_W = (ord(c) for c in "ADELQSW")
+VK_LMENU, VK_RMENU = 0xA4, 0xA5
+VK_SHIFT, VK_CONTROL, VK_MENU = 0x10, 0x11, 0x12  # VK_MENU = Alt
+VK_A, VK_D, VK_E, VK_L, VK_N, VK_Q, VK_S, VK_W = (ord(c) for c in "ADELNQSW")
 # klawisze przechwytywane, gdy aktywne jest okno MuJoCo
-CAPTURED = {VK_W, VK_A, VK_S, VK_D, VK_Q, VK_E, VK_L, VK_SHIFT, VK_CONTROL}
-ALIASES = {VK_LSHIFT: VK_SHIFT, VK_RSHIFT: VK_SHIFT, VK_LCONTROL: VK_CONTROL, VK_RCONTROL: VK_CONTROL}
+CAPTURED = {VK_W, VK_A, VK_S, VK_D, VK_Q, VK_E, VK_L, VK_N, VK_SHIFT, VK_CONTROL, VK_MENU}
+ALIASES = {VK_LSHIFT: VK_SHIFT, VK_RSHIFT: VK_SHIFT, VK_LCONTROL: VK_CONTROL, VK_RCONTROL: VK_CONTROL,
+           VK_LMENU: VK_MENU, VK_RMENU: VK_MENU}
 
 WH_KEYBOARD_LL, WH_MOUSE_LL = 13, 14
 WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP = 0x100, 0x101, 0x104, 0x105
@@ -43,14 +47,17 @@ HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, w
 
 
 class FlightKeyboard:
-    """Stan trzymanych klawiszy lotu, liczba naciśnięć L i przewinięcia kółka (odwrócone)."""
+    """Stan trzymanych klawiszy lotu, liczba naciśnięć L / Alt / N i przewinięcia kółka (odwrócone)."""
 
-    def __init__(self, speed=3.0, climb=1.5, yaw_rate=0.8):
-        self.speed, self.climb, self.yaw_rate = speed, climb, yaw_rate
+    def __init__(self, tilt_rate=1.0, yaw_rate=0.8, throttle=0.3, speed=3.0, climb=1.5):
+        self.tilt_rate, self.yaw_rate, self.throttle = tilt_rate, yaw_rate, throttle
+        self.speed, self.climb = speed, climb  # tryb ze stabilizacją
         self.available = sys.platform == "win32"
         self._lock = threading.Lock()
         self._held: set[int] = set()
         self._lock_presses = 0
+        self._stab_presses = 0
+        self._world_presses = 0
         self._wheel = 0.0
         self._thread_id = None
         if self.available:
@@ -81,6 +88,10 @@ class FlightKeyboard:
                     if down:
                         if vk == VK_L and vk not in self._held:  # bez autorepeat
                             self._lock_presses += 1
+                        if vk == VK_MENU and vk not in self._held:
+                            self._stab_presses += 1
+                        if vk == VK_N and vk not in self._held:
+                            self._world_presses += 1
                         self._held.add(vk)
                     else:
                         self._held.discard(vk)
@@ -119,10 +130,29 @@ class FlightKeyboard:
 
     # --- odczyt z pętli symulacji ----------------------------------------------------------------
 
-    def setpoints(self):
-        """Zwraca forward/left/up [m/s] i yaw_rate [rad/s] dla VelocityController.
+    def command(self, hover_thrust):
+        """RateCommand prosto z klawiszy (tryb acro, bez autostabilizacji).
 
-        S/W przód/tył, D/A lewo/prawo, Shift wznoszenie, Ctrl opadanie, Q/E obrót w lewo/prawo.
+        S/W pochylenie nosa w dół/górę, D/A przechył w lewo/prawo, Q/E obrót w lewo/prawo —
+        trzymany klawisz = stała prędkość kątowa, puszczony = 0 (dron zostaje w bieżącym przechyle).
+        Shift/Ctrl: ciąg powyżej/poniżej ciągu zawisu; bez nich stały ciąg zawisu (bez kompensacji
+        przechyłu, więc przechylony dron opada).
+        """
+        cmd = RateCommand(thrust=hover_thrust)
+        if not self.available or not self._mujoco_focused():
+            return cmd
+        with self._lock:
+            d = lambda vk: vk in self._held  # noqa: E731
+            cmd.pitch_rate = self.tilt_rate * (d(VK_S) - d(VK_W))
+            cmd.roll_rate = self.tilt_rate * (d(VK_A) - d(VK_D))
+            cmd.yaw_rate = self.yaw_rate * (d(VK_Q) - d(VK_E))
+            cmd.thrust = hover_thrust * (1 + self.throttle * (d(VK_SHIFT) - d(VK_CONTROL)))
+        return cmd
+
+    def setpoints(self):
+        """Tryb ze stabilizacją: forward/left/up [m/s] i yaw_rate [rad/s] dla VelocityController.
+
+        Te same klawisze co w acro: S/W przód/tył, D/A lewo/prawo, Shift/Ctrl góra/dół, Q/E obrót.
         """
         sp = dict(forward=0.0, left=0.0, up=0.0, yaw_rate=0.0)
         if not self.available or not self._mujoco_focused():
@@ -134,6 +164,18 @@ class FlightKeyboard:
             sp["up"] = self.climb * (d(VK_SHIFT) - d(VK_CONTROL))
             sp["yaw_rate"] = self.yaw_rate * (d(VK_Q) - d(VK_E))
         return sp
+
+    def take_stabilization_toggles(self):
+        """Ile razy naciśnięto Alt od ostatniego odczytu."""
+        with self._lock:
+            n, self._stab_presses = self._stab_presses, 0
+        return n
+
+    def take_new_world_requests(self):
+        """Ile razy naciśnięto N od ostatniego odczytu."""
+        with self._lock:
+            n, self._world_presses = self._world_presses, 0
+        return n
 
     def take_camera_toggles(self):
         """Ile razy naciśnięto L od ostatniego odczytu."""

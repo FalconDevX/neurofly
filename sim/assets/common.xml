@@ -1,0 +1,27 @@
+<!--
+  Wspólna część scen: dron X2, oświetlenie, niebo i zielona kratka podłoża.
+  Same sceny (scene_*.xml) dokładają podłoże: płaską podłogę albo teren.
+-->
+<mujoco model="neurofly common">
+  <include file="x2/x2.xml"/>
+  <compiler texturedir="x2" meshdir="x2"/>
+
+  <statistic meansize=".05"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="-20" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.24 0.48 0.2" rgb2="0.17 0.37 0.14"
+      markrgb="0.55 0.75 0.45" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+  </worldbody>
+</mujoco>
