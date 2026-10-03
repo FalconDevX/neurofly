@@ -3,6 +3,7 @@
     python scripts/vision_server.py                      # tryb command: wzrok + BancController
     python scripts/vision_server.py --mode activity      # sama aktywność BANC (dla Osoby 2)
     python scripts/vision_server.py --no-fisheye         # klatki już równokątne (FakeStereoCamera)
+    python scripts/vision_server.py --decoder data/decoders/planB.npz   # wagi z train_decoder.py
 
 Tryb command na starcie kalibruje kontroler na syntetycznych scenach (FakeStereoCamera: cel na
 wprost i ±60°, obrót przy pasach). To tylko punkt startowy: symulator powinien od razu wysłać
@@ -53,6 +54,7 @@ def main() -> None:
     ap.add_argument("--mode", choices=("command", "activity"), default="command")
     ap.add_argument("--no-fisheye", action="store_true")
     ap.add_argument("--fps", type=float, default=30.0)
+    ap.add_argument("--decoder", type=Path, help="wagi dekodera z train_decoder.py (po każdej kalibracji)")
     args = ap.parse_args()
 
     t0 = time.perf_counter()
@@ -68,7 +70,9 @@ def main() -> None:
                   flush=True)
         finally:
             bridge.fisheye = fisheye
-    server = ControlServer(bridge, ctrl)
+    if args.decoder and ctrl is not None:
+        ctrl.decoder.load_weights(args.decoder)
+    server = ControlServer(bridge, ctrl, decoder_weights=args.decoder)
     sock = zmq.Context.instance().socket(zmq.REP)
     sock.bind(args.address)
     print(f"serwer wzroku ({args.mode}) gotowy na {args.address} po {time.perf_counter() - t0:.0f} s, "

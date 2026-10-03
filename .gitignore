@@ -6,3 +6,7 @@ neurofly/
 third_party/
 *.mp4
 .venv*/
+
+# generowane przez sim/world.py
+sim/assets/scene_eyes.xml
+sim/assets/x2/x2_eyes.xml

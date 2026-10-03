@@ -107,6 +107,37 @@ class BancController:
         self.dyn.reset()
         return self.haltere_sign
 
+    def warm_start(self, visual, steps: int = 30) -> None:
+        """Po ``dyn.reset()`` stan startuje od zera, daleko od spoczynku z kalibracji: pierwsze klatki
+        dawały thrust 0 / yaw ±1. Dochodzi do stanu ustalonego dla bieżącej sceny (bez IMU)."""
+        ext = self.external_input(visual, None)
+        for _ in range(steps):
+            self.dyn.step(ext, self.substeps)
+
+    def _raw_command(self, visual, imu: ImuState | None, steps: int) -> np.ndarray:
+        """thrust/roll/pitch/yaw dekodera przed przycięciem do [-1, 1]."""
+        f = self._settle(visual or [], imu, steps)
+        self.dyn.reset()
+        return self.decoder.M @ self.decoder.normalized(f)
+
+    def calibrate_haltere_gain(self, visual: list[BancActivation] | None = None, rate: float = 1.0,
+                               target: float = 0.5, steps: int = 30, iters: int = 4) -> float:
+        """``haltere_gain`` tak, żeby obrót ``rate`` rad/s dawał |yaw| ≈ ``target`` (przed przycięciem).
+
+        Skala odczytu MN pochodzi z bodźców wzrokowych, a w scenie MuJoCo wzrok zmienia MN o ~1%
+        spoczynku: przy stałym gain 0.5 haltery dawały surowy yaw ~6000 na 1 rad/s, pętla gyro → yaw
+        oscylowała ±1 co klatkę, a thrust stał na 0. Odpowiedź jest prawie liniowa w gain, więc
+        kilka kroków skalowania wystarcza. Po ``calibrate_haltere_sign``."""
+        if self.haltere_yaw_weight == 0:
+            return self.haltere_gain
+        base = self._raw_command(visual, None, steps)[3]
+        for _ in range(iters):
+            resp = abs(self._raw_command(visual, ImuState(gyro=(0.0, 0.0, rate)), steps)[3] - base)
+            if resp < 1e-12:
+                break
+            self.haltere_gain *= target / resp
+        return self.haltere_gain
+
     def _mean_yaw(self, frames: list, skip: float = 0.5) -> float:
         self.dyn.reset()
         yaws = [self.decoder.decode(self._step_features(v, None)).yaw for v in frames]
