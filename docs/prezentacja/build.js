@@ -11,20 +11,20 @@ const DATA = JSON.parse(fs.readFileSync(A("data.json"), "utf8"));
 
 const THEME = {
   name: "NeuroFly",
-  headFontFace: "Calibri",
-  bodyFontFace: "Calibri",
+  headFontFace: "Segoe UI",
+  bodyFontFace: "Segoe UI",
   colors: {
     dk1: "09090B", // tło (zinc-950)
     lt1: "FAFAFA", // tekst
     dk2: "18181B", // karty (zinc-900)
     lt2: "A1A1AA", // tekst drugorzędny (zinc-400)
-    accent1: "2DD4BF", // teal — wzrok, jedyny akcent interfejsu
-    accent2: "FBBF24", // amber — neurony zstępujące (DN)
-    accent3: "FB7185", // rose — motoneurony
-    accent4: "60A5FA", // blue — haltery / sensoryka
+    accent1: "2FD3C4", // teal — wzrok, jedyny akcent interfejsu
+    accent2: "FFB547", // amber — neurony zstępujące (DN)
+    accent3: "FF4FB0", // pink — motoneurony
+    accent4: "4F8CFF", // blue — haltery / sensoryka
     accent5: "52525B", // zinc-600
     accent6: "27272A", // zinc-800 — linie, ramki
-    hlink: "2DD4BF",
+    hlink: "2FD3C4",
     folHlink: "A1A1AA",
   },
 };
@@ -196,10 +196,10 @@ pres.addSection({ title: "Connectome" });
   stat(s, 4.3, 2.55, 2.6, "1,53 mln", "połączeń w grafie modelu", T.lt1, "s-edges");
   stat(s, 7.0, 2.55, 2.6, "863", "szkielety neuronów lotu (SWC)", T.lt1, "s-skel");
   tag(s, 4.3, 3.95, "płaty wzrokowe · 105 646", T.accent1, "t-ol");
-  tag(s, 4.3, 4.27, "mózg centralny · 42 620", T.lt2, "t-cb");
+  tag(s, 4.3, 4.27, "mózg centralny · 42 620", "A98BFF", "t-cb");
   tag(s, 7.0, 3.95, "VNC · 26 769", T.accent3, "t-vnc");
   tag(s, 7.0, 4.27, "DN / AN · 3 165", T.accent2, "t-dn");
-  s.addNotes("Oficjalny BANC v888 (Bates et al. 2026, publiczny bucket Lee Lab). Somy z kolumny position; kolory: wzrok teal, " +
+  s.addNotes("Oficjalny BANC v888 (Bates et al. 2026, publiczny bucket Lee Lab). Somy z kolumny position; kolory jak w eksploratorze: wzrok teal, interneurony fiolet, " +
     "DN amber, motoneurony rose. Żadnych syntetycznych grafów.");
 }
 

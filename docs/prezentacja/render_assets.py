@@ -24,19 +24,57 @@ cls = np.array(d["somas"]["super_class"])
 classes = d["classes"]
 center = (xyz.min(0) + xyz.max(0)) / 2
 
-TEAL, AMBER, ROSE, BLUE, ZINC = (45, 212, 191), (251, 191, 36), (251, 113, 133), (96, 165, 250), (161, 161, 170)
+# paleta jak w eksploratorze (HTML): żywe kolory klas, interneurony fioletowe zamiast szarych
+TEAL, AMBER, PINK, BLUE, VIOLET, SLATE = (47, 211, 196), (255, 181, 71), (255, 79, 176), (79, 140, 255), (169, 139, 255), (111, 120, 150)
 CLASS_COLOR = {}
 for i, c in enumerate(classes):
     if c in ("optic_lobe_intrinsic", "visual_projection", "visual_centrifugal"):
         CLASS_COLOR[i] = TEAL
     elif c in ("descending", "ascending"):
         CLASS_COLOR[i] = AMBER
-    elif c in ("motor",):
-        CLASS_COLOR[i] = ROSE
+    elif c in ("motor", "visceral_circulatory", "ascending_visceral_circulatory"):
+        CLASS_COLOR[i] = PINK
     elif c.startswith("sensory"):
         CLASS_COLOR[i] = BLUE
+    elif c == "unknown":
+        CLASS_COLOR[i] = SLATE
     else:
-        CLASS_COLOR[i] = ZINC
+        CLASS_COLOR[i] = VIOLET
+GROUP_COLOR = {"dn_flight_power": AMBER, "dn_flight_steering": (255, 138, 61), "wing_power": PINK,
+               "wing_steering": (255, 122, 217), "wing_tension": (214, 92, 255), "haltere_aff": BLUE}
+
+# kotwice etykiet (współrzędne BANC, µm) — jak w explorer/lib/data.ts
+region = np.array(d["somas"]["region"])
+regions = d["regions"]
+def _c(mask):
+    return xyz[mask].mean(0)
+_ol = region == regions.index("optic_lobe")
+_cb = _c(region == regions.index("central_brain"))
+_vnc = _c(region == regions.index("ventral_nerve_cord"))
+NECK_Y = 375.0
+_skel = {}
+for n in d["neurons"]:
+    g = n["group"].rsplit("_", 1)[0]
+    pts = np.concatenate([np.array(l, np.float32) for l in n["lines"]]) if n["lines"] else np.zeros((0, 3), np.float32)
+    _skel.setdefault(g, []).append(pts)
+_skel = {g: np.concatenate(v) for g, v in _skel.items()}
+_dn = np.concatenate([_skel["dn_flight_power"], _skel["dn_flight_steering"]])
+_dn = _dn[_dn[:, 1] < NECK_Y]  # tylko część w mózgu, aksony biegną do VNC
+_mn = np.concatenate([_skel["wing_power"], _skel["wing_steering"], _skel["wing_tension"]])
+# w BANC prawa strona muchy ma mniejsze x
+REGION_LABELS = [
+    ("Płat wzrokowy P", "prawe oko · wejście z FlyVis", _c(_ol & (xyz[:, 0] < center[0])), TEAL, "L"),
+    ("Płat wzrokowy L", "lewe oko · tylko 36% typów w v888", _c(_ol & (xyz[:, 0] >= center[0])), TEAL, "R"),
+    ("Mózg centralny", "integracja zmysłów · somy DN", _cb - np.array([0, 60, 0]), VIOLET, "L"),
+    ("Szyja", "aksony DN: mózg → VNC", np.array([_cb[0], NECK_Y, _cb[2]]), AMBER, "R"),
+    ("VNC", "motoneurony skrzydeł, nóg i halter", _vnc + np.array([0, 80, 0]), PINK, "R"),
+]
+CIRCUIT_LABELS = [
+    ("DN lotu", "odczyt kursu (yaw) z pojedynczych DN", _dn.mean(0), AMBER, "L"),
+    ("Motoneurony skrzydeł", "moc, sterowanie, napięcie → dron", _mn.mean(0), PINK, "L"),
+    ("Aferenty halter", "czujniki obrotu ← żyroskop drona", _skel["haltere_aff"].mean(0), BLUE, "R"),
+    ("Szyja", "jedyna droga komend do skrzydeł", np.array([_cb[0], NECK_Y, _cb[2]]), (250, 250, 250), "R"),
+]
 
 
 def project(p, yaw, pitch, scale, W, H, dist=2600.0):
@@ -51,14 +89,21 @@ def project(p, yaw, pitch, scale, W, H, dist=2600.0):
     return W / 2 + x * f * scale, H / 2 - y * f * scale, z
 
 
-def fit(u, v, W, H, margin=0.06, horizontal=False):
+def fit(u, v, W, H, margin=0.06, horizontal=False, margin_x=None):
     """Wpasowuje rzut w kadr po percentylach (punkty odstające nie przesuwają środka); horizontal: mózg z lewej."""
     if horizontal:
         u, v = v.copy(), -u.copy()
     lo_u, hi_u = np.percentile(u, [0.3, 99.7])
     lo_v, hi_v = np.percentile(v, [0.3, 99.7])
-    s = min(W * (1 - 2 * margin) / (hi_u - lo_u), H * (1 - 2 * margin) / (hi_v - lo_v))
-    return (u - (lo_u + hi_u) / 2) * s + W / 2, (v - (lo_v + hi_v) / 2) * s + H / 2, s
+    mx = margin if margin_x is None else margin_x
+    s = min(W * (1 - 2 * mx) / (hi_u - lo_u), H * (1 - 2 * margin) / (hi_v - lo_v))
+    cu, cv_ = (lo_u + hi_u) / 2, (lo_v + hi_v) / 2
+
+    def tf(pu, pv):
+        if horizontal:
+            pu, pv = pv, -pu
+        return (pu - cu) * s + W / 2, (pv - cv_) * s + H / 2
+    return (u - cu) * s + W / 2, (v - cv_) * s + H / 2, tf
 
 
 def splat(img, u, v, color, alpha, r=1):
@@ -72,51 +117,93 @@ def splat(img, u, v, color, alpha, r=1):
             np.add.at(img, (vv[ok], uu[ok]), color[ok] * alpha[ok, None])
 
 
-def connectome(W=2400, H=1500, yaw=0.55, pitch=0.28, name="connectome_3d.png", scale=1.55, horizontal=False):
+FONT_B = r"C:\Windows\Fonts\seguisb.ttf"  # Segoe UI Semibold
+FONT_R = r"C:\Windows\Fonts\segoeui.ttf"
+
+
+def draw_labels(out, labels, tf, yaw, pitch, size=44):
+    """Etykiety jak w eksploratorze: kropka na kotwicy, linia do boku, nazwa + krótki opis (Segoe UI).
+    labels: (nazwa, opis, punkt BANC, kolor, strona "L"/"R"); etykiety po jednej stronie nie nachodzą na siebie."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    H, W = out.shape[:2]
+    im = Image.fromarray(out)
+    dr = ImageDraw.Draw(im)
+    fb, fr = ImageFont.truetype(FONT_B, size), ImageFont.truetype(FONT_R, int(size * 0.68))
+    pad, gap = int(size * 0.35), int(size * 0.4)
+    th = size + int(size * 0.68) + pad * 3
+    boxes = []
+    for name, desc, p, col, side in labels:
+        pu, pv, _ = project(np.asarray(p, np.float32)[None], yaw, pitch, 1.0, 0, 0)
+        ax, ay = (float(a[0]) for a in tf(pu, pv))
+        bw = max(dr.textlength(name, font=fb), dr.textlength(desc, font=fr)) + 2 * pad
+        bx = W * 0.025 if side == "L" else W * 0.975 - bw
+        boxes.append(dict(name=name, desc=desc, col=col, side=side, ax=ax, ay=ay, bx=bx, bw=bw, by=ay - th / 2))
+    for side in "LR":
+        bs = sorted((b for b in boxes if b["side"] == side), key=lambda b: b["ay"])
+        y = 4
+        for b in bs:
+            b["by"] = y = max(b["by"], y)
+            y += th + gap
+        over = (bs[-1]["by"] + th + 4 - H) if bs else 0
+        if over > 0:
+            for b in bs:
+                b["by"] -= over
+    for b in boxes:
+        col, ax, ay, bx, by, bw = b["col"], b["ax"], b["ay"], b["bx"], b["by"], b["bw"]
+        ex, ey = (bx + bw if b["side"] == "L" else bx), float(np.clip(ay, by + pad, by + th - pad))
+        dr.line([(ax, ay), (ex, ey)], fill=col, width=3)
+        r = size * 0.22
+        dr.ellipse([ax - r, ay - r, ax + r, ay + r], fill=col, outline=(9, 9, 11), width=3)
+        dr.rounded_rectangle([bx, by, bx + bw, by + th], radius=pad, fill=(16, 16, 20), outline=col, width=3)
+        dr.text((bx + pad, by + pad), b["name"], font=fb, fill=(250, 250, 250))
+        dr.text((bx + pad, by + pad * 2 + size), b["desc"], font=fr, fill=(170, 170, 180))
+    return np.asarray(im)
+
+
+def connectome(W=2400, H=1500, yaw=0.55, pitch=0.28, name="connectome_3d.png", horizontal=False, labels=None, margin_x=None):
     img = np.zeros((H, W, 3), np.float32)
     u, v, z = project(xyz, yaw, pitch, 1.0, 0, 0)
-    u, v, _ = fit(u, v, W, H, horizontal=horizontal)
+    u, v, tf = fit(u, v, W, H, horizontal=horizontal, margin_x=margin_x)
     depth = (z - z.min()) / (z.max() - z.min())
     col = np.array([CLASS_COLOR[c] for c in cls], np.float32)
-    alpha = 0.10 + 0.22 * (1 - depth)  # bliższe jaśniejsze
-    gray = np.all(col == ZINC, axis=1)
-    alpha[gray] *= 0.55
+    alpha = 0.14 + 0.26 * (1 - depth)  # bliższe jaśniejsze
     teal = np.all(col == TEAL, axis=1)
-    alpha[teal] *= 0.28  # płaty wzrokowe są bardzo gęste — bez tego przepalają się do jednolitej plamy
+    alpha[teal] *= 0.38  # płaty wzrokowe są bardzo gęste — bez tego przepalają się do jednolitej plamy
+    violet = np.all(col == VIOLET, axis=1)
+    alpha[violet] *= 0.6
     splat(img, u, v, col, alpha, r=2)
     img = BG + img * 0.9
+    # miękkie przepalenie zamiast obcinania do bieli: kolor zostaje w gęstych miejscach
+    img = BG + (255 - BG) * (1 - np.exp(-(img - BG) / 180.0))
     out = np.clip(img, 0, 255).astype(np.uint8)
     out = cv2.GaussianBlur(out, (0, 0), 0.6)
+    if labels:
+        out = draw_labels(out, labels, tf, yaw, pitch)
     cv2.imwrite(str(OUT / name), cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
 
 
-def circuit(W=2000, H=1500, yaw=0.55, pitch=0.28, scale=1.3, horizontal=False):
-    """Szkielety 863 neuronów lotu (SWC) na przygaszonym tle som."""
+def circuit(W=2000, H=1500, yaw=0.55, pitch=0.28, horizontal=False, labels=None, margin_x=None):
+    """Szkielety 863 neuronów lotu (SWC) na przygaszonym tle som w kolorach klas."""
     img = np.zeros((H, W, 3), np.float32)
     u0, v0, z = project(xyz, yaw, pitch, 1.0, 0, 0)
-    u, v, s_fit = fit(u0, v0, W, H, horizontal=horizontal)
-    cu, cv_ = (np.percentile(u0 if not horizontal else v0, [0.3, 99.7]).mean(),
-               np.percentile(v0 if not horizontal else -u0, [0.3, 99.7]).mean())
-
-    def tf(pu, pv):
-        if horizontal:
-            pu, pv = pv, -pu
-        return (pu - cu) * s_fit + W / 2, (pv - cv_) * s_fit + H / 2
-    splat(img, u, v, np.full((len(u), 3), 120, np.float32), np.full(len(u), 0.05), r=1)
-    gcol = {"dn_flight_power": AMBER, "dn_flight_steering": (245, 158, 11), "wing_power": ROSE,
-            "wing_steering": (244, 63, 94), "wing_tension": (225, 29, 72), "haltere_aff": BLUE}
+    u, v, tf = fit(u0, v0, W, H, horizontal=horizontal, margin_x=margin_x)
+    col = np.array([CLASS_COLOR[c] for c in cls], np.float32)
+    splat(img, u, v, col, np.full(len(u), 0.035), r=1)
     layer = np.zeros_like(img)
-    for n in d["neurons"]:
-        g = n["group"].rsplit("_", 1)[0]
-        c = gcol.get(g, ZINC)
+    order = {"haltere_aff": 0, "dn_flight_power": 1, "dn_flight_steering": 1}
+    for n in sorted(d["neurons"], key=lambda n: order.get(n["group"].rsplit("_", 1)[0], 2)):
+        c = GROUP_COLOR.get(n["group"].rsplit("_", 1)[0], (161, 161, 170))
         for line in n["lines"]:
-            p = np.array(line, np.float32)
-            pu, pv, _ = project(p, yaw, pitch, 1.0, 0, 0)
+            pu, pv, _ = project(np.array(line, np.float32), yaw, pitch, 1.0, 0, 0)
             pu, pv = tf(pu, pv)
             pts = np.stack([pu, pv], 1).astype(np.int32)
-            cv2.polylines(layer, [pts], False, tuple(float(x) * 0.30 for x in c), 2, cv2.LINE_AA)
+            cv2.polylines(layer, [pts], False, tuple(float(x) * 0.85 for x in c), 2, cv2.LINE_AA)
     img = BG + img + layer
+    img = BG + (255 - BG) * (1 - np.exp(-(img - BG) / 200.0))
     out = np.clip(img, 0, 255).astype(np.uint8)
+    if labels:
+        out = draw_labels(out, labels, tf, yaw, pitch)
     cv2.imwrite(str(OUT / "circuit_3d.png"), cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
 
 
@@ -188,9 +275,9 @@ if __name__ == "__main__":
     what = sys.argv[1:] or ["connectome", "circuit", "sim", "retina", "finish"]
     if "connectome" in what:
         connectome(2600, 1300, yaw=0.5, pitch=0.25, name="connectome_wide.png", horizontal=True)
-        connectome(1400, 1700, yaw=0.55, pitch=0.25, name="connectome_3d.png")
+        connectome(1400, 1700, yaw=0.55, pitch=0.25, name="connectome_3d.png", labels=REGION_LABELS, margin_x=0.12)
     if "circuit" in what:
-        circuit(1400, 1700)
+        circuit(1400, 1700, labels=CIRCUIT_LABELS, margin_x=0.12)
     if "sim" in what:
         sim_images()
     if "retina" in what:
