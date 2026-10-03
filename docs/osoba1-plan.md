@@ -124,7 +124,8 @@ Czas klatki (RTX 3070 Ti, pełny BANC 175k neuronów):
 | kontroler BANC (Osoba 2) | 44,9 | 34,9 |
 | **razem** | **101 ms (9,9 FPS)** | **49,8 ms (20 FPS)** |
 
-Część Osoby 1 to ~7 ms. Do 30 FPS brakuje po stronie kontrolera (Osoba 2: GPU / podgraf).
+Po scaleniu z `main` (dynamika BANC Osoby 2 na GPU): kamera 9,0, Retina 1,2, FlyVis 3,6,
+mapowanie 0,2, kontroler 2,5 → **razem 16,4 ms (61 FPS)**, budżet 30 FPS spełniony.
 
 Zachowanie w pętli (po poprawce orientacji):
 - ID zgodne: `unmatched_ids = 0` dla wszystkich neuronów wzroku.
