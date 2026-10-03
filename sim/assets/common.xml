@@ -11,7 +11,11 @@
   <visual>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
     <rgba haze="0.15 0.25 0.35 1"/>
-    <global azimuth="-20" elevation="-20"/>
+    <!-- offheight 512: oko drona renderuje 512 x 450 (domyślny bufor offscreen to 640 x 480) -->
+    <global azimuth="-20" elevation="-20" offwidth="640" offheight="512"/>
+    <!-- mapa cieni 2048 zamiast domyślnych 4096: przy scenie 60 x 60 m wygląda tak samo, a render oczu
+         spada z ~20 do ~2.6 ms, widok główny z ~9 do ~5 ms (GTX 1650) -->
+    <quality shadowsize="2048"/>
   </visual>
 
   <asset>

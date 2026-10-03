@@ -21,6 +21,7 @@ WINDOW_TITLE_PREFIX = "MuJoCo"
 VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL = 0xA0, 0xA1, 0xA2, 0xA3
 VK_LMENU, VK_RMENU = 0xA4, 0xA5
 VK_SHIFT, VK_CONTROL, VK_MENU = 0x10, 0x11, 0x12  # VK_MENU = Alt
+VK_CAPITAL = 0x14  # CapsLock — tylko obserwowany (nie przechwytujemy, lampka działa normalnie)
 VK_A, VK_D, VK_E, VK_L, VK_N, VK_Q, VK_S, VK_W = (ord(c) for c in "ADELNQSW")
 # klawisze przechwytywane, gdy aktywne jest okno MuJoCo
 CAPTURED = {VK_W, VK_A, VK_S, VK_D, VK_Q, VK_E, VK_L, VK_N, VK_SHIFT, VK_CONTROL, VK_MENU}
@@ -58,10 +59,13 @@ class FlightKeyboard:
         self._lock_presses = 0
         self._stab_presses = 0
         self._world_presses = 0
+        self._caps_lock = False
+        self._caps_down = False
         self._wheel = 0.0
         self._thread_id = None
         if self.available:
             self._user32 = ctypes.windll.user32
+            self._caps_lock = bool(self._user32.GetKeyState(VK_CAPITAL) & 1)  # stan na starcie
             self._user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
             self._user32.CallNextHookEx.restype = ctypes.c_ssize_t
             self._user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
@@ -82,6 +86,12 @@ class FlightKeyboard:
         if n_code == 0:
             info = ctypes.cast(l_param, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
             vk = ALIASES.get(info.vkCode, info.vkCode)
+            if vk == VK_CAPITAL:  # każde naciśnięcie (bez autorepeat) przełącza CapsLock
+                down = w_param in (WM_KEYDOWN, WM_SYSKEYDOWN)
+                with self._lock:
+                    if down and not self._caps_down:
+                        self._caps_lock = not self._caps_lock
+                    self._caps_down = down
             if vk in CAPTURED:
                 down = w_param in (WM_KEYDOWN, WM_SYSKEYDOWN)
                 with self._lock:
@@ -133,7 +143,7 @@ class FlightKeyboard:
     def command(self, hover_thrust):
         """RateCommand prosto z klawiszy (tryb acro, bez autostabilizacji).
 
-        S/W pochylenie nosa w dół/górę, D/A przechył w lewo/prawo, Q/E obrót w lewo/prawo —
+        W/S pochylenie nosa w dół/górę, A/D przechył w lewo/prawo, Q/E obrót w lewo/prawo —
         trzymany klawisz = stała prędkość kątowa, puszczony = 0 (dron zostaje w bieżącym przechyle).
         Shift/Ctrl: ciąg powyżej/poniżej ciągu zawisu; bez nich stały ciąg zawisu (bez kompensacji
         przechyłu, więc przechylony dron opada).
@@ -143,8 +153,8 @@ class FlightKeyboard:
             return cmd
         with self._lock:
             d = lambda vk: vk in self._held  # noqa: E731
-            cmd.pitch_rate = self.tilt_rate * (d(VK_S) - d(VK_W))
-            cmd.roll_rate = self.tilt_rate * (d(VK_A) - d(VK_D))
+            cmd.pitch_rate = self.tilt_rate * (d(VK_W) - d(VK_S))
+            cmd.roll_rate = self.tilt_rate * (d(VK_D) - d(VK_A))
             cmd.yaw_rate = self.yaw_rate * (d(VK_Q) - d(VK_E))
             cmd.thrust = hover_thrust * (1 + self.throttle * (d(VK_SHIFT) - d(VK_CONTROL)))
         return cmd
@@ -152,15 +162,15 @@ class FlightKeyboard:
     def setpoints(self):
         """Tryb ze stabilizacją: forward/left/up [m/s] i yaw_rate [rad/s] dla VelocityController.
 
-        Te same klawisze co w acro: S/W przód/tył, D/A lewo/prawo, Shift/Ctrl góra/dół, Q/E obrót.
+        Te same klawisze co w acro: W/S przód/tył, A/D lewo/prawo, Shift/Ctrl góra/dół, Q/E obrót.
         """
         sp = dict(forward=0.0, left=0.0, up=0.0, yaw_rate=0.0)
         if not self.available or not self._mujoco_focused():
             return sp
         with self._lock:
             d = lambda vk: vk in self._held  # noqa: E731
-            sp["forward"] = self.speed * (d(VK_S) - d(VK_W))
-            sp["left"] = self.speed * (d(VK_D) - d(VK_A))
+            sp["forward"] = self.speed * (d(VK_W) - d(VK_S))
+            sp["left"] = self.speed * (d(VK_A) - d(VK_D))
             sp["up"] = self.climb * (d(VK_SHIFT) - d(VK_CONTROL))
             sp["yaw_rate"] = self.yaw_rate * (d(VK_Q) - d(VK_E))
         return sp
@@ -170,6 +180,12 @@ class FlightKeyboard:
         with self._lock:
             n, self._stab_presses = self._stab_presses, 0
         return n
+
+    @property
+    def caps_lock(self):
+        """Stan CapsLocka (włączony = wiatr w podglądzie)."""
+        with self._lock:
+            return self._caps_lock
 
     def take_new_world_requests(self):
         """Ile razy naciśnięto N od ostatniego odczytu."""
