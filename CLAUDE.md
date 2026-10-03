@@ -181,3 +181,11 @@ Dane: `npm run dev` / `build` uruchamia `scripts/sync-data.mjs`, który kopiuje 
 - Lot do celu w świecie Osoby 3: `sim/banc_pilot.py` (BANC → thrust/roll/pitch/yaw, `WorldEnv` angle), trening
   `scripts/train_world.py` / `train_distributed.py --world` (master i workerzy muszą mieć ten sam tryb — inaczej
   master odrzuca), okno `python -m sim.run_env --banc <wagi>`. Założenia: czysty korytarz bez bloków, maszt ×4.
+- Lot w świecie: `sim/world_decoder.py` (`WorldDecoder`). yaw TYLKO z BANC (6 MN + DN lotu + wyraz wolny; czujniki mają
+  wagę 0 z konstrukcji), thrust/roll/pitch z BANC + czujników drona (wysokość z dalmierza, v_z, prędkość przód/bok
+  z przepływu optycznego, żyroskop) — NASZE ZAŁOŻENIE: BANC = percepcja i kierunek, czujniki = stabilizacja.
+  Bez czujników te osie były nieuczalne (nauczyciel steruje z wysokości/prędkości, których BANC nie dostaje).
+  Uczenie: DAgger, statystyki XᵀX/Xᵀy ze wszystkich epizodów, wagi z regresji grzbietowej po każdej partii;
+  w `train_distributed --world` workerzy wysyłają statystyki, master liczy regresję. Błąd osobno dla osi (`loss_axes`).
+  Yaw na start z dekodera zawisu (`planB_distributed.npz`, 1000 epizodów na 2 GPU: 25.1° → 2.65°).
+- Wykresy: `python scripts/plot_training.py <plik.json>` → `*_wykresy.png` (robione też automatycznie po treningu).

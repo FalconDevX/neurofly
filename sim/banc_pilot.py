@@ -107,14 +107,23 @@ class BancPilot:
     def __init__(self, decoder_path: Path | None, forward_speed: float = 1.0, max_yaw_rate: float = 1.0,
                  calib: str = "drone", beacon_scale: float = 1.0, brain: bool = True,
                  cruise_height: float = 1.0, assist: bool | None = None, lr: float = 0.5,
-                 readout: str | None = None) -> None:
+                 readout: str | None = None, yaw_init: Path | None = None) -> None:
+        """``decoder_path``: wagi ``WorldDecoder`` (``train_world.py``, plik z ``w_yaw``) albo dekoder z
+        ``train_decoder.py`` (tryb ze wspomaganiem). ``decoder_path=None`` + ``assist=False``: nowy
+        ``WorldDecoder`` do treningu, wiersz yaw z ``yaw_init`` (dekoder zawisu, np. planB_distributed.npz)."""
         from banc_control import BancController, Connectome
         from banc_control.readout import LinearDecoder
         from visual_pipeline import VisionBridge
 
         t0 = time.perf_counter()
+        from sim.world_decoder import WorldDecoder
+
         self.decoder_path = Path(decoder_path) if decoder_path else None
-        M = np.load(self.decoder_path)["M"] if self.decoder_path else None
+        self.world = None  # WorldDecoder: BANC → yaw, BANC + czujniki drona → thrust/roll/pitch
+        if self.decoder_path and WorldDecoder.is_world_file(self.decoder_path):
+            self.world = WorldDecoder.load(self.decoder_path)
+            assist, readout = False, "dn"
+        M = np.load(self.decoder_path)["M"] if self.decoder_path and self.world is None else None
         if readout is None:
             readout = "dn" if M is None or M.shape[1] > 7 else "mn"
         if assist is None:  # wagi bez wyrazu wolnego (train_decoder.py) → tryb ze wspomaganiem
@@ -123,6 +132,11 @@ class BancPilot:
         self.assist = assist
         self.ctrl = BancController(Connectome.from_banc(), decoder=LinearDecoder(lr=lr, bias=not assist),
                                    readout=readout)
+        if not assist and self.world is None:
+            self.world = WorldDecoder(self.ctrl.decoder.M.shape[1])
+            if yaw_init:  # yaw z dekodera zawisu (te same cechy; bez wyrazu wolnego → 0)
+                w = np.load(yaw_init)["M"][3]
+                self.world.w_yaw[:len(w)] = w
         self.bridge = VisionBridge(fps=30, fisheye=True)
         self.forward_speed, self.max_yaw_rate, self.cruise_height = forward_speed, max_yaw_rate, cruise_height
         self.calib, self.beacon_scale = calib, beacon_scale
@@ -158,7 +172,7 @@ class BancPilot:
             render = self._drone_env.calibration_render
         t = time.perf_counter()
         calib = LocalClient(ControlServer(self.bridge, self.ctrl)).calibrate(render)
-        if self.decoder_path:
+        if self.decoder_path and self.world is None:
             self.ctrl.decoder.load_weights(self.decoder_path)
         print(f"kalibracja ({self.calib}) {time.perf_counter() - t:.0f} s: yaw_axis_sign {calib['yaw_axis_sign']:+.0f}",
               flush=True)
@@ -193,7 +207,17 @@ class BancPilot:
         left, right = obs["eyes"]
         gx, gy, gz = (float(v) for v in obs["imu"][:3])
         cmd = self.ctrl.step(self.bridge.step_batch(left, right), ImuState(gyro=(gx, gy, -gz)))  # yaw + = w prawo
-        if self.assist:
+        if self.world is not None:  # BANC (normalizacja z kalibracji) + czujniki drona → komenda
+            from sim.world_decoder import drone_sensors
+
+            env = self.env
+            _, _, yaw = euler_zyx(env.data)
+            x = self.ctrl.decoder.normalized(cmd.debug["motor_features"])
+            sens = drone_sensors(env.data.xpos[env.drone_id][2] - ground_z(env), env.data.qvel[0:3], yaw,
+                                 (gx, gy, gz))
+            cmd = self.world.decode(np.nan_to_num(x), sens)
+            cmd.debug = {"x": x, "sensors": sens}
+        elif self.assist:
             cmd.roll = 0.0  # ze wspomaganiem roll z BANC nie idzie do drona
         self.cmd = cmd
         if self.view is not None:
@@ -236,21 +260,32 @@ class WorldRunner:
         obs, info = self.reset(world_seed, start_noise)
         b0, d0 = np.rad2deg(bearing(env)), info["distance"]
         dmin, losses, heights, done = d0, [], [], False
+        sq = []  # kwadraty błędów [thrust, roll, pitch, yaw] względem nauczyciela (WorldDecoder)
         while not done:
             cmd = pilot.decide(obs)
             act = cmd
             if learn:
                 target = teacher(env, self.height, self.speed)
-                losses.append(dec.fit_step(cmd.debug["motor_features"], target, apply=False))
+                if pilot.world is not None:  # DAgger: dane do statystyk, wagi dopasowuje wywołujący (fit)
+                    sq.append(pilot.world.add(cmd.debug["x"], cmd.debug["sensors"], target))
+                else:
+                    losses.append(dec.fit_step(cmd.debug["motor_features"], target, apply=False))
                 if rng.random() < beta:
                     act = target
             obs, _, term, trunc, info = env.step(pilot.action(act))
             dmin = min(dmin, info["distance"])
             heights.append(env.data.xpos[env.drone_id][2] - ground_z(env))
             done = term or trunc
-        if learn:
+        if learn and pilot.world is None:
             dec.apply_pending()  # wagi stałe w trakcie lotu, krok po epizodzie
-        return {"world": int(world_seed), "outcome": info["outcome"], "reached": info["outcome"] == "cel",
+        extra = {}
+        if sq:
+            from sim.world_decoder import AXES
+
+            mse = np.mean(sq, axis=0)
+            extra = {"loss_axes": dict(zip(AXES, map(float, mse)))}
+            losses = [float(mse.mean())]
+        return {**extra, "world": int(world_seed), "outcome": info["outcome"], "reached": info["outcome"] == "cel",
                 "time": float(info["time"]), "start_dist": float(d0), "min_dist": float(dmin),
                 "bearing": float(b0), "final_deg": float(abs(np.rad2deg(bearing(env)))),
                 "mean_height": float(np.mean(heights)), "loss": float(np.mean(losses)) if losses else float("nan")}

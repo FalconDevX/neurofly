@@ -67,9 +67,14 @@ class Master:
         self.rng = np.random.default_rng(args.seed)
         self.M = None
         self.ref = None  # kalibracja pierwszego workera (znak osi yaw, trymy)
+        self.wdec = None  # --world: WorldDecoder (statystyki DAgger sumowane od workerów, wagi z regresji)
         if args.init:
             d = np.load(args.init)
-            self.M = d["M"].copy()
+            self.M = d["M"].copy() if "M" in d.files else None
+            if "w_yaw" in d.files:  # wagi z train_world.py
+                from sim.world_decoder import WorldDecoder
+
+                self.M = WorldDecoder.load(args.init).to_matrix()
         self.M0 = None
         self.next_episode = 0
         self.last_bearing = 0.0
@@ -185,14 +190,25 @@ class Master:
             self.init_from_worker |= bool(msg.get("init"))
             self.workers[name] = {"episodes": 0, "since": time.time(), "gpu": self.pinged.get(name, "?")}
         elif kind == "result" and msg["kind"] == "train":
-            self.M += np.array(msg["dM"])
+            if "stats" in msg:  # --world: DAgger, wagi od nowa z regresji na wszystkich danych
+                from sim.world_decoder import WorldDecoder
+
+                if self.wdec is None:
+                    self.wdec = WorldDecoder.for_matrix(self.M)
+                self.wdec.merge(msg["stats"])
+                self.wdec.fit()
+                self.M = self.wdec.to_matrix()
+            else:
+                self.M += np.array(msg["dM"])
             self.done_episodes += len(msg["metrics"])
             self.workers.setdefault(name, {"episodes": 0})["episodes"] += len(msg["metrics"])
             for m in msg["metrics"]:
                 self.history.append({**m, "worker": name, "gpu": self.pinged.get(name, "?")})
                 if "outcome" in m:  # --world
+                    la = m.get("loss_axes") or {}
+                    axes = "  ".join(f"{k} {v:.3f}" for k, v in la.items()) or f"loss {m['loss']:.4f}"
                     print(f"ep {m['index']:4d} [{who}]: świat {m['world']} → {m['outcome']:<12s} najbliżej "
-                          f"{m['min_dist']:4.1f} m  beta {m['beta']:.2f}  loss {m['loss']:.4f}  "
+                          f"{m['min_dist']:4.1f} m  beta {m['beta']:.2f}  {axes}  "
                           f"({self.done_episodes}/{self.args.episodes})", flush=True)
                     continue
                 print(f"ep {m['index']:4d} [{who}]: cel {m['bearing']:+5.0f}° → {m['final_deg']:5.1f}°  "
@@ -214,14 +230,23 @@ class Master:
         meta = {"plan": a.plan, "episodes": a.episodes, "workers": list(self.workers),
                 "before": self.before.get("reached", self.before["mean_final_deg"]),
                 "after": self.after.get("reached", self.after["mean_final_deg"])}
-        np.savez(out, M=self.M, hover_thrust=self.ref["hover_thrust"], pitch_trim=self.ref["pitch_trim"],
-                 meta=np.array(repr(meta)))
+        if getattr(a, "world", False):  # plik WorldDecoder (sim.run_env --banc, sim.banc_pilot)
+            from sim.world_decoder import WorldDecoder
+
+            WorldDecoder.for_matrix(self.M).save(out, **meta, samples=self.wdec.n if self.wdec else 0)
+        else:
+            np.savez(out, M=self.M, hover_thrust=self.ref["hover_thrust"], pitch_trim=self.ref["pitch_trim"],
+                     meta=np.array(repr(meta)))
         out.with_suffix(".json").write_text(json.dumps(
             {"args": vars(a), "workers": self.workers, "before": self.before, "after": self.after,
              "M_before": self.M0.tolist(), "M_after": self.M.tolist(), "history": self.history},
             default=str, indent=1))
         show("przed treningiem", self.before)
         show("po treningu    ", self.after)
+        import subprocess  # wykresy przebiegu (matplotlib jest w środowisku workerów; brak → tylko komunikat)
+
+        subprocess.run([sys.executable, str(ROOT / "scripts" / "plot_training.py"), str(out.with_suffix(".json"))],
+                       check=False)
         print(f"zapisano {out}; workerzy: {self.workers}", flush=True)
 
 
@@ -259,7 +284,7 @@ def run_worker(args) -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     from sim.env import summarize
     from train_decoder import Runner, build, sweep_fit
-    from train_world import EVAL_WORLDS, TRAIN_SEED_OFFSET, setup
+    from train_world import EVAL_WORLDS, TRAIN_SEED_OFFSET, default_yaw_init, setup
 
     host = args.name or socket.gethostname()  # identyfikator u mastera
     import torch
@@ -304,11 +329,12 @@ def run_worker(args) -> None:
     t0 = time.perf_counter()
     init = None
     if args.world:  # lot do celu w WorldEnv (train_world.py); wagi startowe z --world-init
-        init = args.world_init if args.world_init and args.world_init.exists() else None
-        print(f"[{name}] wagi startowe: {init or 'brak pliku — od zera (master weźmie je od innego workera)'}",
+        init = args.world_init if args.world_init and args.world_init.exists() else default_yaw_init()
+        print(f"[{name}] yaw na start: {init or 'brak pliku — od zera (master weźmie wagi od innego workera)'}",
               flush=True)
-        env, pilot, runner, calib = setup(init, args.lr, args.beacon_scale, args.max_time)
+        env, pilot, runner, calib = setup(init, args.beacon_scale, args.max_time)
         ctrl, dec = pilot.ctrl, pilot.ctrl.decoder
+        wdec = pilot.world
     else:
         env, bridge, ctrl, calib = build(args.plan, args.lr, args.noise, args.reward_lr, args.thrust,
                                          args.readout, args.visual_gain)
@@ -322,7 +348,8 @@ def run_worker(args) -> None:
     if not args.world:
         runner = Runner(env, bridge, ctrl)
 
-    task = send({"type": "hello", "name": host, "M": dec.M.tolist(), "init": init is not None,
+    M_start = wdec.to_matrix() if args.world else dec.M
+    task = send({"type": "hello", "name": host, "M": M_start.tolist(), "init": init is not None,
                  "calib": {"yaw_axis_sign": ctrl.yaw_axis_sign, "haltere_gain": ctrl.haltere_gain,
                            "hover_thrust": dec.hover_thrust, "pitch_trim": dec.pitch_trim}})
     while task["kind"] != "stop":
@@ -331,10 +358,14 @@ def run_worker(args) -> None:
             task = send({"type": "poll", "name": host})
             continue
         M = np.array(task["M"])
-        if M.shape != dec.M.shape:  # też przy starym masterze bez kontroli trybu
-            sys.exit(f"[{name}] wagi od mastera {M.shape} ≠ moje {dec.M.shape}: inny tryb treningu — "
+        if M.shape != M_start.shape:  # też przy starym masterze bez kontroli trybu
+            sys.exit(f"[{name}] wagi od mastera {M.shape} ≠ moje {M_start.shape}: inny tryb treningu — "
                      f"uruchom workera {'bez' if args.world else 'z'} --world (tak jak master)")
-        dec.M = M.copy()
+        if args.world:
+            wdec.from_matrix(M)
+            wdec.reset_stats()  # do mastera idą tylko dane z tego zadania
+        else:
+            dec.M = M.copy()
         if task["kind"] == "eval":
             print(f"[{name}] ewaluacja {task['tag']}…", flush=True)
             ev = runner.evaluate(EVAL_WORLDS) if args.world else runner.evaluate(args.eval_duration)
@@ -356,8 +387,12 @@ def run_worker(args) -> None:
             metrics.append({**ep, "loss": loss, **m})
             print(f"[{name}] ep {ep['index']}: cel {ep['bearing']:+5.0f}° → {m['final_deg']:5.1f}° "
                   f"({time.perf_counter() - t:.0f} s)", flush=True)
-        task = send({"type": "result", "kind": "train", "name": host,
-                     "dM": (dec.M - M).tolist(), "metrics": metrics})
+        if args.world:  # statystyki DAgger zamiast zmiany wag; master liczy regresję
+            task = send({"type": "result", "kind": "train", "name": host, "stats": wdec.stats(as_lists=True),
+                         "metrics": metrics})
+        else:
+            task = send({"type": "result", "kind": "train", "name": host,
+                         "dM": (dec.M - M).tolist(), "metrics": metrics})
     print(f"[{name}] koniec{': ' + task['error'] if task.get('error') else ''}", flush=True)
     if task.get("error"):
         sys.exit(1)
@@ -389,8 +424,8 @@ def main() -> None:
     ap.add_argument("--init", type=Path, help="wagi startowe (.npz); domyślnie z kalibracji pierwszego workera")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--world", action="store_true", help="lot do celu w świecie Osoby 3 (master i workerzy)")
-    ap.add_argument("--world-init", type=Path, default=ROOT / "data" / "decoders" / "planB_dn.npz",
-                    help="worker --world: wagi startowe (yaw)")
+    ap.add_argument("--world-init", type=Path, default=None,
+                    help="worker --world: dekoder zawisu do startu yaw (domyślnie planB_distributed / planB_dn)")
     ap.add_argument("--beacon-scale", type=float, default=4.0, help="worker --world: grubość masztu celu")
     ap.add_argument("--max-time", type=float, default=40.0, help="worker --world: s na epizod")
     ap.add_argument("--workers", type=int, default=2, help="ilu workerów musi się zgłosić (inaczej przerwanie)")
