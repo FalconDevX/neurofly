@@ -103,8 +103,12 @@ dl.kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; whi
 .tools button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .tools svg { width: 18px; height: 18px; }
 .labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.label3d { position: absolute; left: 0; top: 0; display: none; align-items: center; gap: 8px; white-space: nowrap; font: 500 14px var(--body); color: var(--ink); text-shadow: 0 0 4px #09090b, 0 0 8px #09090b; }
-.label3d i { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 2px #09090b; flex: none; }
+.label3d { position: absolute; left: 0; top: 0; display: none; align-items: flex-start; gap: 8px; white-space: nowrap; font: 500 13px var(--body); color: var(--ink); text-shadow: 0 0 4px #09090b, 0 0 8px #09090b; }
+.label3d span { display: grid; gap: 2px; }
+.label3d.left { flex-direction: row-reverse; text-align: right; }
+.label3d.left span { justify-items: end; }
+.label3d small { display: block; max-width: 210px; white-space: normal; font: 400 11px/1.35 var(--body); color: var(--muted); background: rgb(9 9 11 / 0.72); border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; text-shadow: none; }
+.label3d i { width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 2px #09090b; flex: none; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: center; background: rgb(255 255 255 / 0.02); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; }
 .legend button { display: inline-flex; align-items: center; gap: 8px; background: none; border: 0; color: var(--ink); font: 13px var(--body); cursor: pointer; padding: 2px 0; }
 .legend button i { width: 14px; height: 14px; border-radius: 50%; }

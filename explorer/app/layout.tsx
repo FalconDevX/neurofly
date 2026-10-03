@@ -9,12 +9,12 @@ const mono = Geist_Mono({ subsets: ["latin", "latin-ext"], variable: "--font-mon
 
 export const metadata: Metadata = {
   title: "NeuroFly BANC Explorer",
-  description: "Connectome BANC v888 w 3D z renderem na GPU: somy, szkielety neuronów lotu, partnerzy synaptyczni i komendy drona.",
+  description: "BANC v888 connectome in 3D, rendered on the GPU: somas, flight-neuron skeletons, synaptic partners and drone commands.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pl" className={`${geist.variable} ${mono.variable}`}>
+    <html lang="en" className={`${geist.variable} ${mono.variable}`}>
       <body>{children}</body>
     </html>
   );

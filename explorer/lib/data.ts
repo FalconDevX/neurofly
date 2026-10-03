@@ -45,12 +45,12 @@ export interface Cmd {
 }
 
 export const CATS = [
-  { key: "sens", name: "Sensoryczne", short: "Sensoryczne", color: "#60a5fa", classes: ["sensory", "sensory_ascending", "sensory_descending"] },
-  { key: "motor", name: "Motoryczne", short: "Motoryczne", color: "#fb7185", classes: ["motor", "visceral_circulatory", "ascending_visceral_circulatory"] },
-  { key: "dnan", name: "Zstępujące / wstępujące", short: "DN / AN", color: "#fbbf24", classes: ["descending", "ascending"] },
-  { key: "vis", name: "Wzrokowe", short: "Wzrokowe", color: "#2dd4bf", classes: ["optic_lobe_intrinsic", "visual_projection", "visual_centrifugal"] },
-  { key: "inter", name: "Interneurony", short: "Interneurony", color: "#a1a1aa", classes: ["central_brain_intrinsic", "ventral_nerve_cord_intrinsic"] },
-  { key: "unk", name: "Nieoznaczone", short: "Nieoznaczone", color: "#52525b", classes: ["unknown"] },
+  { key: "sens", name: "Sensory", short: "Sensory", color: "#60a5fa", classes: ["sensory", "sensory_ascending", "sensory_descending"] },
+  { key: "motor", name: "Motor", short: "Motor", color: "#fb7185", classes: ["motor", "visceral_circulatory", "ascending_visceral_circulatory"] },
+  { key: "dnan", name: "Descending / ascending", short: "DN / AN", color: "#fbbf24", classes: ["descending", "ascending"] },
+  { key: "vis", name: "Visual", short: "Visual", color: "#2dd4bf", classes: ["optic_lobe_intrinsic", "visual_projection", "visual_centrifugal"] },
+  { key: "inter", name: "Interneurons", short: "Interneurons", color: "#a1a1aa", classes: ["central_brain_intrinsic", "ventral_nerve_cord_intrinsic"] },
+  { key: "unk", name: "Unannotated", short: "Unannotated", color: "#52525b", classes: ["unknown"] },
 ] as const;
 
 export const GROUPS = [
@@ -59,7 +59,7 @@ export const GROUPS = [
   { key: "wing_power", name: "MN wing power", color: "#fb7185" },
   { key: "wing_steering", name: "MN wing steering", color: "#f43f5e" },
   { key: "wing_tension", name: "MN wing tension", color: "#e11d48" },
-  { key: "haltere_aff", name: "Aferenty halter", color: "#60a5fa" },
+  { key: "haltere_aff", name: "Haltere afferents", color: "#60a5fa" },
 ] as const;
 
 export const groupKey = (n: NeuronRec) => n.group.replace(/_[LR]$/, "");
@@ -70,6 +70,16 @@ export const SCALE = 0.01;
 
 /** aktywność → poziom 0..1 w skali log 10⁻⁶..1 */
 export const actLevel = (a: number) => Math.min(1, Math.max(0, (Math.log10(Math.max(a, 1e-6)) + 6) / 6));
+
+/** Etykieta nad sceną: region (z pozycji som) albo grupa obwodu lotu (z punktów szkieletów). */
+export interface Label {
+  name: string;
+  desc: string; // krótko: co to jest i jaką rolę ma w pętli NeuroFly
+  pos: [number, number, number];
+  color?: string; // kropka w kolorze grupy (regiony: biała)
+  left?: boolean; // tekst na lewo od punktu (grupy lotu), żeby nie nachodził na etykiety regionów
+  groups?: string[]; // klucze GROUPS — etykieta znika, gdy wszystkie te grupy są wyłączone
+}
 
 export interface Prepared {
   raw: RawData;
@@ -82,7 +92,7 @@ export interface Prepared {
   neckY: number; // granica mózg / VNC we współrzędnych sceny
   brainCenter: [number, number, number];
   vncCenter: [number, number, number];
-  labels: { name: string; pos: [number, number, number] }[];
+  labels: Label[];
   line: { pos: Float32Array; group: Float32Array; neuron: Float32Array; act: Float32Array };
   pick: Float32Array; // x, y, z, indeks neuronu
 }
@@ -119,7 +129,7 @@ export function prepare(raw: RawData, cmds: Cmd[]): Prepared {
     const r = raw.somas.region[i];
     if (r === reg.central_brain && y > brainMax) brainMax = y;
     if (r === reg.ventral_nerve_cord && y < vncMin) vncMin = y;
-    const key = r === reg.optic_lobe ? (x < center[0] ? "optic_lobe" : "") : raw.regions[r];
+    const key = r === reg.optic_lobe ? (x < center[0] ? "optic_lobe_a" : "optic_lobe_b") : raw.regions[r];
     if (key) { const s = (sum[key] ??= [0, 0, 0, 0]); s[0] += x; s[1] += y; s[2] += z; s[3]++; }
   }
   const neckUm = (Math.min(brainMax, 420) + Math.max(vncMin, 420)) / 2;
@@ -149,15 +159,47 @@ export function prepare(raw: RawData, cmds: Cmd[]): Prepared {
     }
   });
 
+  const neckY = -(neckUm - center[1]) * SCALE;
+  // kotwice grup lotu: środek punktów szkieletów (DN — tylko część w mózgu, bo aksony biegną do VNC)
+  const gsum = GROUPS.map(() => [0, 0, 0, 0]);
+  for (let i = 0; i < k * 2; i++) {
+    const gi = group[i], y = pos[3 * i + 1];
+    if (GROUPS[gi]?.key.startsWith("dn_") && y < neckY) continue;
+    const s = gsum[gi];
+    if (!s) continue;
+    s[0] += pos[3 * i]; s[1] += y; s[2] += pos[3 * i + 2]; s[3]++;
+  }
+  const gcent = (keys: string[]): [number, number, number] => {
+    const t = [0, 0, 0, 0];
+    for (const key of keys) { const s = gsum[GROUP_INDEX[key]]; for (let d = 0; d < 4; d++) t[d] += s[d]; }
+    return t[3] ? [t[0] / t[3], t[1] / t[3], t[2] / t[3]] : [0, 0, 0];
+  };
+  // w BANC prawa strona muchy ma mniejsze x (sprawdzone na meta v888: side=right ~48k, left ~194k voxeli)
+  const [olRight, olLeft] = [centroid("optic_lobe_a"), centroid("optic_lobe_b")];
+  const labels: Label[] = [
+    { name: "Optic lobe R", desc: "Processes the right eye's image. The drone camera signal enters here (FlyVis → BANC); 80% of neurons are typed in v888.",
+      pos: olRight, left: true },
+    { name: "Optic lobe L", desc: "Left eye. Only 36% of this lobe's neurons are typed in v888, so the FlyVis map drives ~3× fewer of them.",
+      pos: olLeft },
+    { name: "Central brain", desc: "Integrates the senses and decides on movement; DN somas are here.",
+      pos: [brainCenter[0], brainCenter[1] + 1.2, brainCenter[2]] }, // nad etykietami płatów, żeby opisy się nie nakładały
+    { name: "Neck connective", desc: "DN axons run through here from the brain to the VNC — the only path for commands to the wings.",
+      pos: [brainCenter[0], neckY, brainCenter[2]] },
+    { name: "VNC", desc: "Ventral nerve cord (like the spinal cord): motor neurons of the wings, legs and halteres.",
+      pos: [vncCenter[0], vncCenter[1] - 2.2, vncCenter[2]] },
+    { name: "Flight DNs", desc: "Descending neurons, flight power / steering. The decoder reads heading (yaw) from individual DNs.",
+      pos: (([x, y, z]) => [x, y - 0.6, z] as [number, number, number])(gcent(["dn_flight_power", "dn_flight_steering"])), color: GROUPS[0].color, groups: ["dn_flight_power", "dn_flight_steering"], left: true },
+    { name: "Wing motor neurons", desc: "Power (DLM/DVM), steering and tension wing muscles — BANC's output to the drone.",
+      pos: gcent(["wing_power", "wing_steering", "wing_tension"]), color: GROUPS[2].color, groups: ["wing_power", "wing_steering", "wing_tension"], left: true },
+    { name: "Haltere afferents", desc: "The fly's rotation sensors (halteres). Here they receive the drone gyroscope signal.",
+      pos: gcent(["haltere_aff"]), color: GROUPS[5].color, groups: ["haltere_aff"] },
+  ];
+
   return {
     raw, cmds, center, toScene, somaPos, somaCat, somaAct,
-    neckY: -(neckUm - center[1]) * SCALE,
+    neckY,
     brainCenter, vncCenter,
-    labels: [
-      { name: "Mózg centralny", pos: brainCenter },
-      { name: "Płat wzrokowy", pos: centroid("optic_lobe") },
-      { name: "VNC", pos: vncCenter },
-    ],
+    labels,
     line: { pos, group, neuron, act },
     pick: new Float32Array(pick),
   };

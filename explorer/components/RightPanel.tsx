@@ -4,14 +4,14 @@ import { useEffect, useRef, useState } from "react";
 
 import { CATS, GROUPS, groupKey, type Prepared } from "@/lib/data";
 
-const fmt = (n: number) => n.toLocaleString("pl-PL");
+const fmt = (n: number) => n.toLocaleString("en-US");
 const CLASS_PL: Record<string, string> = {
-  descending: "DN", motor: "motoneuron", sensory: "sensoryczny", sensory_ascending: "sens. wstęp.", sensory_descending: "sens. zstęp.",
-  central_brain_intrinsic: "interneuron", ventral_nerve_cord_intrinsic: "interneuron VNC", optic_lobe_intrinsic: "płat wzr.",
-  visual_projection: "proj. wzrokowa", visual_centrifugal: "wzr. odśrodk.", ascending: "AN",
+  descending: "DN", motor: "motor neuron", sensory: "sensory", sensory_ascending: "sens. ascending", sensory_descending: "sens. descending",
+  central_brain_intrinsic: "interneuron", ventral_nerve_cord_intrinsic: "VNC interneuron", optic_lobe_intrinsic: "optic lobe",
+  visual_projection: "visual projection", visual_centrifugal: "visual centrifugal", ascending: "AN",
 };
-const REGION_SHORT: Record<string, string> = { optic_lobe: "płat wzr.", central_brain: "mózg", ventral_nerve_cord: "VNC" };
-const REGION_NAMES: Record<string, string> = { optic_lobe: "Płat wzrokowy", central_brain: "Mózg centralny", ventral_nerve_cord: "VNC", "ascending/descending/inne": "Inne / szyja" };
+const REGION_SHORT: Record<string, string> = { optic_lobe: "optic lobe", central_brain: "brain", ventral_nerve_cord: "VNC" };
+const REGION_NAMES: Record<string, string> = { optic_lobe: "Optic lobe", central_brain: "Central brain", ventral_nerve_cord: "VNC", "ascending/descending/inne": "Other / neck" };
 const REGION_COLORS = ["#2dd4bf", "#a1a1aa", "#fb7185", "#52525b"];
 
 export function RegionOverview({ data }: { data: Prepared }) {
@@ -25,14 +25,14 @@ export function RegionOverview({ data }: { data: Prepared }) {
   let off = 0;
   return (
     <div className="card">
-      <h2>Przegląd regionów
-        <select className="mini-select" value={by} onChange={(e) => setBy(e.target.value as "class" | "region")} aria-label="Grupowanie">
-          <option value="class">Według klasy</option>
-          <option value="region">Według regionu</option>
+      <h2>Region overview
+        <select className="mini-select" value={by} onChange={(e) => setBy(e.target.value as "class" | "region")} aria-label="Grouping">
+          <option value="class">By class</option>
+          <option value="region">By region</option>
         </select>
       </h2>
       <div className="donut">
-        <svg viewBox="-60 -60 120 120" role="img" aria-label="Wykres pierścieniowy">
+        <svg viewBox="-60 -60 120 120" role="img" aria-label="Donut chart">
           <circle r={R} fill="none" stroke="#27272a" strokeWidth={20} />
           {items.map((i) => {
             const len = (i.n / total) * C, el = (
@@ -43,7 +43,7 @@ export function RegionOverview({ data }: { data: Prepared }) {
             return el;
           })}
           <text y={-2} textAnchor="middle" fill="#fafafa" fontSize={13} fontWeight={600} fontFamily="var(--font-display)">{fmt(total)}</text>
-          <text y={12} textAnchor="middle" fill="#a1a1aa" fontSize={7.5}>neuronów</text>
+          <text y={12} textAnchor="middle" fill="#a1a1aa" fontSize={7.5}>neurons</text>
         </svg>
         <div className="rows">
           {items.map((i) => (
@@ -72,18 +72,18 @@ export function Inspector({ data, index, bearing, onPick }: { data: Prepared; in
   return (
     <>
       <div className="card">
-        <h2>Wybrany neuron <button className="ghost" onClick={copy}>{copied ? "Skopiowano" : "Kopiuj root ID"}</button></h2>
-        <div className="neuron-head"><h3>{n.cell_type || "bez typu"}</h3><span className="badge" style={{ color: g.color }}>{g.name}</span></div>
+        <h2>Selected neuron <button className="ghost" onClick={copy}>{copied ? "Copied" : "Copy root ID"}</button></h2>
+        <div className="neuron-head"><h3>{n.cell_type || "untyped"}</h3><span className="badge" style={{ color: g.color }}>{g.name}</span></div>
         <div className="neuron-body">
           <dl className="kv">
             {([
               ["Root ID", <span key="id" className="mono small">{n.id}</span>],
-              ["Klasa", n.super_class === "descending" ? "zstępujący (DN)" : CLASS_PL[n.super_class] ?? n.super_class],
-              ["Funkcja", n.function || "—"],
-              ["Strona", n.side === "left" ? "lewa" : n.side === "right" ? "prawa" : "—"],
+              ["Class", n.super_class === "descending" ? "descending (DN)" : CLASS_PL[n.super_class] ?? n.super_class],
+              ["Function", n.function || "—"],
+              ["Side", n.side === "left" ? "left" : n.side === "right" ? "right" : "—"],
               ["NT", n.nt ? `${n.nt}${n.nt_score != null ? ` (${n.nt_score})` : ""}` : "—"],
-              ["Syn. wej.", fmt(n.syn_in)], ["Syn. wyj.", fmt(n.syn_out)],
-              ["Aktywność", act < 0.01 ? act.toExponential(1) : act.toFixed(3)],
+              ["Syn. in", fmt(n.syn_in)], ["Syn. out", fmt(n.syn_out)],
+              ["Activity", act < 0.01 ? act.toExponential(1) : act.toFixed(3)],
             ] as const).map(([k, v]) => <div key={k} className="kvrow"><dt>{k}</dt><dd>{v}</dd></div>)}
           </dl>
           <Thumb data={data} index={index} color={g.color} />
@@ -91,14 +91,14 @@ export function Inspector({ data, index, bearing, onPick }: { data: Prepared; in
       </div>
 
       <div className="card">
-        <h2>Połączenia synaptyczne</h2>
-        <div className="subtabs" role="group" aria-label="Kierunek">
-          <button aria-pressed={dir === "in"} onClick={() => setDir("in")}>Wejścia ({fmt(n.syn_in)} syn.)</button>
-          <button aria-pressed={dir === "out"} onClick={() => setDir("out")}>Wyjścia ({fmt(n.syn_out)} syn.)</button>
+        <h2>Synaptic connections</h2>
+        <div className="subtabs" role="group" aria-label="Direction">
+          <button aria-pressed={dir === "in"} onClick={() => setDir("in")}>Inputs ({fmt(n.syn_in)} syn.)</button>
+          <button aria-pressed={dir === "out"} onClick={() => setDir("out")}>Outputs ({fmt(n.syn_out)} syn.)</button>
         </div>
         <div className="tbl">
           <table>
-            <thead><tr><th>#</th><th>Partner</th><th>Klasa</th><th className="n">Synapsy</th><th>Region</th></tr></thead>
+            <thead><tr><th>#</th><th>Partner</th><th>Class</th><th className="n">Synapses</th><th>Region</th></tr></thead>
             <tbody>
               {rows.length ? rows.map(([id, type, cls, cnt, reg], k) => {
                 const target = byId.current!.get(id);
@@ -108,11 +108,11 @@ export function Inspector({ data, index, bearing, onPick }: { data: Prepared; in
                     <td>{k + 1}</td><td>{type}</td><td>{CLASS_PL[cls] ?? (cls || "—")}</td><td className="n">{cnt}</td><td>{REGION_SHORT[reg] ?? (reg || "—")}</td>
                   </tr>
                 );
-              }) : <tr><td colSpan={5} className="note">Brak połączeń ≥ 5 synaps.</td></tr>}
+              }) : <tr><td colSpan={5} className="note">No connections ≥ 5 synapses.</td></tr>}
             </tbody>
           </table>
         </div>
-        <p className="note">Top 8 partnerów z edgelisty v2 (≥ 5 synaps, bez autapsów). Kliknij partnera z obwodu lotu, żeby go wybrać.</p>
+        <p className="note">Top 8 partners from edgelist v2 (≥ 5 synapses, no autapses). Click a flight-circuit partner to select it.</p>
       </div>
     </>
   );
@@ -137,5 +137,5 @@ function Thumb({ data, index, color }: { data: Prepared; index: number; color: s
     });
     t.stroke();
   }, [data, index, color]);
-  return <canvas ref={ref} width={256} height={340} aria-label="Szkielet wybranego neuronu" />;
+  return <canvas ref={ref} width={256} height={340} aria-label="Skeleton of the selected neuron" />;
 }

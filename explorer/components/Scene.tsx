@@ -20,6 +20,8 @@ export interface ViewState {
   groups: boolean[];
   selected: number;
   spin: boolean;
+  labels: boolean; // etykiety części układu nerwowego nad sceną
+  descs: boolean; // krótkie opisy pod etykietami
 }
 
 export interface ViewApi {
@@ -120,18 +122,23 @@ function SelectedNeuron({ data, index }: { data: Prepared; index: number }) {
 }
 
 /** Rzutuje kotwice etykiet co klatkę i przesuwa zwykłe divy nakładki (bez przebudowy Reacta). */
-function LabelProjector({ data, scope, refs }: { data: Prepared; scope: Scope; refs: MutableRefObject<(HTMLDivElement | null)[]> }) {
+function LabelProjector({ data, view, refs }: { data: Prepared; view: ViewState; refs: MutableRefObject<(HTMLDivElement | null)[]> }) {
   const { camera, size } = useThree();
   const v = useMemo(() => new THREE.Vector3(), []);
   useFrame(() => {
+    const scope = view.scope;
     data.labels.forEach((l, i) => {
       const el = refs.current[i];
       if (!el) return;
-      const inScope = scope === "all" || (scope === "brain" ? l.pos[1] > data.neckY : l.pos[1] <= data.neckY);
+      const groupOn = !l.groups || l.groups.some((g) => view.groups[GROUPS.findIndex((x) => x.key === g)]);
+      const inScope = view.labels && groupOn &&
+        (scope === "all" || (scope === "brain" ? l.pos[1] > data.neckY : l.pos[1] <= data.neckY));
       v.set(...l.pos).project(camera);
       const visible = inScope && v.z < 1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05;
       el.style.display = visible ? "flex" : "none";
-      if (visible) el.style.transform = `translate(${((v.x + 1) / 2) * size.width}px, ${((1 - v.y) / 2) * size.height}px) translate(-6px, -50%)`;
+      // kropka zawsze w punkcie kotwicy; tekst w prawo albo (l.left) w lewo od niej
+      if (visible) el.style.transform = `translate(${((v.x + 1) / 2) * size.width}px, ${((1 - v.y) / 2) * size.height}px) ` +
+        (l.left ? "translate(calc(-100% + 6px), -9px)" : "translate(-6px, -9px)");
     });
   });
   return null;
@@ -227,7 +234,7 @@ export default function Scene({ data, view, api, onPick }: { data: Prepared; vie
       <Somas data={data} view={view} />
       <Skeletons data={data} view={view} />
       <SelectedNeuron data={data} index={view.selected} />
-      <LabelProjector data={data} scope={view.scope} refs={labelRefs} />
+      <LabelProjector data={data} view={view} refs={labelRefs} />
       <Rig data={data} view={view} api={api} onPick={onPick} />
       <GizmoHelper alignment="bottom-right" margin={[64, 64]}>
         <GizmoViewport axisColors={["#fb7185", "#60a5fa", "#4ade80"]} labels={["L", "Y", "Z"]} labelColor="#09090b" />
@@ -235,7 +242,10 @@ export default function Scene({ data, view, api, onPick }: { data: Prepared; vie
     </Canvas>
     <div className="labels" aria-hidden="true">
       {data.labels.map((l, i) => (
-        <div key={l.name} className="label3d" ref={(el) => { labelRefs.current[i] = el; }}><i />{l.name}</div>
+        <div key={`${l.name}-${i}`} className={`label3d${l.left ? " left" : ""}`} ref={(el) => { labelRefs.current[i] = el; }}>
+          <i style={l.color ? { background: l.color } : undefined} />
+          <span>{l.name}{view.descs && <small>{l.desc}</small>}</span>
+        </div>
       ))}
     </div>
     </>
