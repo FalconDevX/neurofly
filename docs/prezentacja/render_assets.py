@@ -63,17 +63,17 @@ _dn = _dn[_dn[:, 1] < NECK_Y]  # tylko część w mózgu, aksony biegną do VNC
 _mn = np.concatenate([_skel["wing_power"], _skel["wing_steering"], _skel["wing_tension"]])
 # w BANC prawa strona muchy ma mniejsze x
 REGION_LABELS = [
-    ("Płat wzrokowy P", "prawe oko · wejście z FlyVis", _c(_ol & (xyz[:, 0] < center[0])), TEAL, "L"),
-    ("Płat wzrokowy L", "lewe oko · tylko 36% typów w v888", _c(_ol & (xyz[:, 0] >= center[0])), TEAL, "R"),
-    ("Mózg centralny", "integracja zmysłów · somy DN", _cb - np.array([0, 60, 0]), VIOLET, "L"),
-    ("Szyja", "aksony DN: mózg → VNC", np.array([_cb[0], NECK_Y, _cb[2]]), AMBER, "R"),
-    ("VNC", "motoneurony skrzydeł, nóg i halter", _vnc + np.array([0, 80, 0]), PINK, "R"),
+    ("Optic lobe R", "right eye · FlyVis input", _c(_ol & (xyz[:, 0] < center[0])), TEAL, "L"),
+    ("Optic lobe L", "left eye · only 36% typed in v888", _c(_ol & (xyz[:, 0] >= center[0])), TEAL, "R"),
+    ("Central brain", "sensory integration · DN somas", _cb - np.array([0, 60, 0]), VIOLET, "L"),
+    ("Neck", "DN axons: brain → VNC", np.array([_cb[0], NECK_Y, _cb[2]]), AMBER, "R"),
+    ("VNC", "wing, leg and haltere motor neurons", _vnc + np.array([0, 80, 0]), PINK, "R"),
 ]
 CIRCUIT_LABELS = [
-    ("DN lotu", "odczyt kursu (yaw) z pojedynczych DN", _dn.mean(0), AMBER, "L"),
-    ("Motoneurony skrzydeł", "moc, sterowanie, napięcie → dron", _mn.mean(0), PINK, "L"),
-    ("Aferenty halter", "czujniki obrotu ← żyroskop drona", _skel["haltere_aff"].mean(0), BLUE, "R"),
-    ("Szyja", "jedyna droga komend do skrzydeł", np.array([_cb[0], NECK_Y, _cb[2]]), (250, 250, 250), "R"),
+    ("Flight DNs", "heading (yaw) read from single DNs", _dn.mean(0), AMBER, "L"),
+    ("Wing motor neurons", "power, steering, tension → drone", _mn.mean(0), PINK, "L"),
+    ("Haltere afferents", "rotation sensors ← drone gyro", _skel["haltere_aff"].mean(0), BLUE, "R"),
+    ("Neck", "the only path for commands to the wings", np.array([_cb[0], NECK_Y, _cb[2]]), (250, 250, 250), "R"),
 ]
 
 
