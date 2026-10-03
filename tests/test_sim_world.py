@@ -251,6 +251,51 @@ def test_blocks_keep_clear_and_stand_on_ground(beacon_model, seed):
     assert tilted > 0
 
 
+@pytest.mark.parametrize("seed", range(3))
+def test_blocks_mostly_above_ground(beacon_model, seed):
+    """Co najmniej połowa objętości każdego bloku nad gruntem (niezależne próbkowanie 5x5x5 na część)."""
+    from sim import blocks
+    from sim.terrain import randomize
+
+    m = beacon_model
+    d = mujoco.MjData(m)
+    randomize(m, d, seed)
+    start(m, d)
+    grid = (np.arange(5) + 0.5) / 5 * 2 - 1
+    cells = np.array([[a, b, c] for a in grid for b in grid for c in grid])
+    for i in range(blocks.POOL_SIZE):
+        if m.body_pos[m.body(f"block{i}").id][2] <= blocks.HIDDEN_Z + 1:
+            continue
+        above = total = 0.0
+        for g, _, _ in _block_parts(m, d, i):
+            pts = d.geom_xpos[g] + (cells * m.geom_size[g]) @ d.geom_xmat[g].reshape(3, 3).T
+            ground = np.array([_terrain_z(m, x, y) for x, y in pts[:, :2]])
+            volume = np.prod(m.geom_size[g])
+            above += volume * np.mean(pts[:, 2] > ground)
+            total += volume
+        assert above / total >= blocks.MIN_ABOVE, f"blok {i}: nad ziemią {100 * above / total:.0f} %"
+
+
+def test_hidden_blocks_invisible(beacon_model):
+    """Regresja: schowane (nieużyte) bloki miały pełny rozmiar i prześwitywały pod środkiem mapy."""
+    from sim import blocks
+    from sim.terrain import randomize
+
+    m = beacon_model
+    d = mujoco.MjData(m)
+    for seed in (0, 7):
+        randomize(m, d, seed)
+        hidden = 0
+        for i in range(blocks.POOL_SIZE):
+            if m.body_pos[m.body(f"block{i}").id][2] > blocks.HIDDEN_Z + 1:
+                continue
+            hidden += 1
+            for k in range(blocks.PARTS):
+                g = m.geom(f"block{i}_part{k}").id
+                assert m.geom_size[g].max() <= blocks.TINY and m.geom_rgba[g][3] == 0
+        assert hidden > 0
+
+
 def test_some_blocks_tall_and_tilted(beacon_model):
     from sim import blocks
     from sim.terrain import WALL_HEIGHT, randomize

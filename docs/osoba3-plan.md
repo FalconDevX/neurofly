@@ -67,9 +67,10 @@ Sprawdzone: numpy 2.4.6, scipy 1.17.1, matplotlib 3.11.2, mujoco 3.14.0, model S
   `randomize(model, data, seed)` losuje teren, bloki i cel (~0.1 s) — start zawsze płaski, cel 15–23 m
   od startu, ≥ 6 m od ścian, na wyrównanym placu (też na wzniesieniu albo w dołku). Scenę beacon zawsze
   ładujemy przez `load_scene` + `randomize` (bez nich nie ma bloków, a teren jest płaski na −1 m).
-  Styl „blueprint” (poligon testowy, pod prezentację): granatowe podłoże z siatką 0.5 / 2 / 4 m i jasne bloki
-  z siatką, tekstury z `sim/tools/build_blueprint_textures.py` (`sim/assets/textures/`).
-  `sim/blocks.py` (zastąpił drzewa): 40–60 bloków — kostka, filar, ściana, wieża (2–3 piętra), schodki;
+  Wygląd: brązowe podłoże z siatką 0.5 / 2 / 4 m; bloki z jasnych paneli z siatką, na ścianach bocznych niebieskie
+  prostokąty („okna”) z odstępami, góra i spód sama siatka (tekstura cube: up/down = ±y, front/back = ±z);
+  tekstury z `sim/tools/build_blueprint_textures.py` (`sim/assets/textures/`: ground, block_side, block_top).
+  `sim/blocks.py` (zastąpił drzewa): 60–85 bloków — kostka, filar, ściana, wieża (2–3 piętra), schodki;
   losowy obrót i odcień (biel, błękit, stal, rzadko bursztyn); nie nachodzą na siebie, na start (≥ 3 m)
   ani na plac celu (≥ 2.5 m), nad szczytem zostaje ≥ 1.5 m do granicy planszy. Wszystkie kolidują z dronem.
   Pula bloków jest kompilowana jako obwiednia największego bloku — inaczej MuJoCo (bvh_aabb liczone przy
@@ -175,7 +176,9 @@ python scripts/vision_server.py --decoder data/decoders/planB.npz
   60–85 na świat (średnio ~70). ~15 % filarów/ścian/wież jest **wysokich** (9.5–13 m, ponad granicę planszy 8 m — trzeba
   ominąć); zwykłe zostawiają >= 1.5 m nad szczytem, bloków „prawie do przelecenia” nie ma. ~30 % zwykłych stoi
   **pochylonych** (30–80° do podłoża, obrót całego ciała — kolizje działają). Podstawa zawsze >= 0.3 m w ziemi
-  (blok obniżony o najwyżej uniesiony róg podstawy), więc żaden blok nie wisi w powietrzu.
+  (blok obniżony o najwyżej uniesiony róg podstawy), więc żaden blok nie wisi w powietrzu. Pochyla się w stronę
+  wąskiego boku, a >= 50 % objętości każdego bloku jest nad gruntem (próbki 4x4x4 na część względem terenu
+  pod każdą próbką, z zapasem 5 %; zmierzone na 2105 blokach: min 52 %, mediana 80 %).
 - Opóźnienie silników: `RateController(motor_tau=...)` — siła silnika dochodzi do zadanej z tą stałą czasową
   (filtr 1. rzędu, jak rozpędzające się śmigło). `MOTOR_TAU = 0.04` s; `WorldEnv(motor_tau=0.0)` domyślnie (zgodność),
   `sim.viewer` / `sim.run_env` domyślnie 0.04 (`--motor-tau`; z `--banc` 0). Zmierzone: ciąg 63 % po τ, stabilizacja
