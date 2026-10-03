@@ -1,6 +1,11 @@
 """Odruch optomotoryczny całej pętli wzrok → BANC → komenda: wymuszony obrót drona przy
 scenie z 12 pionowymi pasami. Stabilizacja = komenda yaw przeciwna do obrotu.
 
+Kalibracja jak w serwerze (``calibrate_controller`` na scenach syntetycznych, ze znakiem yaw
+z ``calibrate_yaw_sign``). Ten znak jest dobierany na tym samym bodźcu (obrót przy pasach),
+więc wynik potwierdza, że kalibracja go stosuje, a nie niezależnie poprawność znaku.
+Niezależnym sprawdzeniem jest ``example_sim_client.py`` na scenie MuJoCo.
+
     python scripts/check_optomotor.py
 """
 
@@ -12,19 +17,19 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from banc_control import BancController, Connectome  # noqa: E402
+from vision_server import synthetic_scenes  # noqa: E402
 from visual_pipeline import VisionBridge  # noqa: E402
 from visual_pipeline.fake_camera import FakeStereoCamera  # noqa: E402
+from visual_pipeline.server import calibrate_controller  # noqa: E402
 
 FPS = 30
 
 
 def main() -> None:
     ctrl, bridge = BancController(Connectome.from_banc()), VisionBridge(fps=FPS)
-    target = FakeStereoCamera(0.0)
-    ctrl.calibrate_rest(30, visual=bridge.settle(*target.render(0)))
-    ctrl.calibrate_scale([bridge.settle(*target.render(np.deg2rad(60))),
-                          bridge.settle(*target.render(-np.deg2rad(60)))])
+    print("kalibracja:", calibrate_controller(ctrl, synthetic_scenes(bridge, FPS)), flush=True)
 
     bars = [FakeStereoCamera(np.deg2rad(a)) for a in range(0, 360, 30)]
 

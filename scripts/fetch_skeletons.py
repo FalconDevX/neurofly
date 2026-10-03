@@ -9,6 +9,7 @@ starszej wersji, więc dla każdego neuronu próbujemy kolejnych wersji ID.
 from __future__ import annotations
 
 import sys
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -25,9 +26,15 @@ OUT_DIR = DEFAULT_DATA_DIR / "skeletons"
 
 
 def main() -> None:
+    args = sys.argv[1:]
+    workers = 16
+    if "--workers" in args:  # pliki są małe, ogranicza liczba równoległych połączeń
+        i = args.index("--workers")
+        workers = int(args[i + 1])
+        del args[i:i + 2]
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     meta = pd.read_feather(DEFAULT_DATA_DIR / META_FILE, columns=ID_COLS + ["cell_type", "side"])
-    meta = meta[meta.cell_type.isin(sys.argv[1:]) & meta.side.isin(["left", "right"])]
+    meta = meta[meta.cell_type.isin(args) & meta.side.isin(["left", "right"])]
 
     def fetch(row):
         target = OUT_DIR / f"{row.root_id}.swc"
@@ -37,15 +44,22 @@ def main() -> None:
             rid = getattr(row, c)
             if pd.isna(rid):
                 continue
-            try:
-                with urllib.request.urlopen(BASE + f"{rid}.swc", timeout=30) as r:
-                    target.write_bytes(r.read())
-                return c
-            except urllib.error.HTTPError:
-                continue
+            for attempt in range(3):
+                try:
+                    with urllib.request.urlopen(BASE + f"{rid}.swc", timeout=30) as r:
+                        tmp = target.with_suffix(".tmp")
+                        tmp.write_bytes(r.read())
+                        tmp.replace(target)  # przerwane pobieranie nie zostawia uciętego .swc
+                    return c
+                except urllib.error.HTTPError:
+                    break  # 404: ta wersja ID nie ma szkieletu, próbujemy następnej
+                except (urllib.error.URLError, OSError):
+                    time.sleep(1 + attempt)  # zerwane połączenie: ponów
+            else:
+                return "network_error"
         return "missing"
 
-    with ThreadPoolExecutor(16) as pool:
+    with ThreadPoolExecutor(workers) as pool:
         results = list(pool.map(fetch, meta.itertuples()))
     print(pd.Series(results).value_counts().to_string())
 

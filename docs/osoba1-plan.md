@@ -59,31 +59,42 @@ Odtworzenie:
 
 ```bash
 python scripts/download_banc.py
-python scripts/fetch_skeletons.py Mi1 T4a T4b T4c T4d Mi4 Mi9 Tm3
+python scripts/fetch_skeletons.py --workers 64 <wszystkie typy z mapy>   # ~23 tys. plików
 python scripts/build_flyvis_banc_map.py
 python scripts/validate_flyvis_banc_map.py
 python scripts/check_rotation_banc.py     # kierunek ruchu w BANC przy obrocie drona
+python scripts/coverage_diagnostics.py    # co ogranicza pokrycie
+python scripts/investigate_left_t4.py     # diagnostyka lewej strony
 ```
 
 Metoda:
 1. Arkusz referencyjny: rozgałęzienia Mi1 ze szkieletów SWC (ciała komórek leżą w kilku warstwach i dają ~2,7× gorszą pozycję) → Isomap → skala z powierzchni na komórkę (1 Mi1 = 1 kolumna).
-2. Pozostałe typy: średnia pozycja połączonych synaptycznie, już umieszczonych neuronów (iteracyjnie). Omija problem skrzyżowania wzrokowego.
+2. Pozycje pozostałych neuronów:
+   - z **własnego szkieletu** (węzły w medulli rzutowane na arkusz Mi1) dla wszystkich typów z rozgałęzieniami w medulli: 76% przypisanych neuronów po prawej, 39% po lewej;
+   - ze średniej pozycji połączonych synaptycznie neuronów dla T5 (dendryty w lobuli), CT1 i neuronów bez szkieletu w zasobniku.
 3. Orientacja (obrót siatki FlyVis względem arkusza BANC):
-   - Pozycje T4a–d, Mi4, Mi9, Tm3 z ich własnych szkieletów, rzutowane na arkusz Mi1 (bez cykliczności kroku 2). Procrustes przesunięć wejść T4 względem FlyVis, przedział z bootstrapu po komórkach T4.
-   - **Prawa strona: obrót +94°, 95% CI +92°…+96°**, cosinus 0,78 (stara metoda: +102°, cosinus 0,52).
-   - **Lewa strona: lustro prawej względem płaszczyzny środkowej (odbicie +82°).** Dane T4 lewej strony (6× mniej opisanych T4) dają tę samą oś, ale przeciwny zwrot. O wyborze decydują dwa niezależne źródła, które się zgadzają: symetria dwustronna i neurony brzegu grzbietowego (DRA).
-   - Kontrola grzbietu: kierunek „góra siatki" w 3D wskazuje na neurony DRA (cosinus +0,87 prawa, +0,84 lewa; po obrocie o 180°: −0,87 / −0,84).
-4. Przypisanie 1:1 w obrębie typu (algorytm węgierski), próg 1 kolumna.
+   - Procrustes przesunięć wejść T4 względem FlyVis, tylko wejścia wyznaczające kierunek T4: **Tm3, Mi4, Mi9, C3**. Mi1 leży prawie w osi kolumny T4 (cosinus +0,20 nawet po prawej), a drobne wejścia (TmY15, T4→T4) są zaszumione. Przedział z bootstrapu po komórkach T4.
+   - **Prawa strona: obrót +100°, 95% CI +99°…+103°**, cosinus 0,89.
+   - **Lewa strona: lustro prawej względem płaszczyzny środkowej (odbicie +88°)**, potwierdzone neuronami brzegu grzbietowego (DRA).
+   - Kontrola grzbietu: „góra siatki" w 3D wskazuje na neurony DRA (cosinus +0,89 prawa, +0,81 lewa; po obrocie o 180°: −0,89 / −0,81).
+4. Przypisanie 1:1 w obrębie typu (algorytm węgierski), próg 1 kolumna. Pary dalsze niż próg mają zaporowy koszt, więc algorytm najpierw maksymalizuje liczbę par w progu. Przy zwykłym koszcie odległości przesuwał całe łańcuchy par tuż za próg: dla Mi1 95% kolumn miało neuron w ≤ 1 kolumnie, a zostawało tylko 70%.
 
 Wynik:
 
 | | Prawe oko | Lewe oko |
 |---|---|---|
-| Komórki FlyVis z neuronem BANC | 13 048 / 45 669 | 4 652 / 45 669 |
+| Komórki FlyVis z neuronem BANC | **16 927** / 45 669 (wcześniej 12 963) | **5 535** / 45 669 (wcześniej 4 623) |
 | Typy z dopasowaniem | 48 / 65 | 48 / 65 |
+| Mediana odległości dopasowania | 0,42 kolumny | 0,43 kolumny |
 
-Względem poprzedniej mapy neurony BANC przesunęły się o medianę 1 kolumny po prawej
-(90%: ≤ 2) i 3 kolumny po lewej (90%: ≤ 4).
+**Lewa strona: dlaczego dane T4 wskazywały zwrot przeciwny** (`scripts/investigate_left_t4.py`):
+po lewej zostaje tylko kilka par wejście → T4 z ≥ 100 synapsami. Wcześniejsze dopasowanie
+zdominowała para Mi1 → T4a (2 648 synaps, cosinus −0,86), która nie niesie informacji
+o kierunku (po prawej +0,20). Po jej wykluczeniu dane lewej strony prawie nic nie mówią
+(cosinus 0,21, wolne dopasowanie nie rozróżnia skrętności). Nie ma wzoru wskazującego na
+zamianę etykiet (Mi4/Mi9 czy podtypów T4). Test kolejności warstw płytki lobuli okazał się
+niemiarodajny (zawodzi także po prawej), więc nie jest podstawą wniosku. Orientacja lewej
+strony pochodzi z symetrii i jest zgodna z DRA.
 
 **Kierunek ruchu end-to-end** (`scripts/check_rotation_banc.py`, bez dekodera Osoby 2): przy
 skręcie w prawo prawe oko aktywuje BANC T4b/T5b (tył→przód), lewe T4a/T5a (przód→tył),
@@ -95,8 +106,10 @@ Braki wynikają głównie z BANC:
 - Lewa strona: 72% neuronów płata wzrokowego bez typu.
 - FlyVis ma 721 kolumn, oko ~800, więc brzeg BANC nie ma pary.
 
-Walidacja: 77–98% silnie połączonych par kolumnowych (np. Mi1 → T4a) trafia w tę samą lub
-sąsiednią kolumnę, losowo mediana ~10 kolumn.
+Walidacja: 65–92% silnie połączonych par kolumnowych (np. Mi1 → T4a 82%) trafia w tę samą lub
+sąsiednią kolumnę, mediana 1 kolumna, losowo ~12. Po zwiększeniu pokrycia odsetek spadł o kilka
+punktów (więcej par blisko progu), ale walidacja jest mniej cykliczna: większość pozycji
+pochodzi ze szkieletów, a nie z partnerów.
 
 ## Etap 4: pętla zamknięta i czas rzeczywisty
 
@@ -186,20 +199,28 @@ Luminancja liczona całkowitoliczbowo: 1,5 ms zamiast 5,7 ms na oko.
 **Kolor:** każde omatidium Retina czyta tylko kanał G albo B, więc w kolorowej scenie MuJoCo dawało
 fałszywy kontrast w szachownicę. Most zamienia klatki na luminancję przed Retina.
 
-**Ograniczenie:** tryb `command` kalibruje kontroler na syntetycznych scenach. Na scenie MuJoCo
-`thrust` stoi na 0, bo jasność sceny różni się od kalibracyjnej. Kalibrację trzeba zrobić na
-scenach z symulatora (cel na wprost / ±60°), np. przez dodatkowy typ żądania.
-Rozwiązane: nagłówek `calib` (`neutral` / `left` / `right` / `turn_left` / `turn_right` / `finish`),
-po stronie symulatora wystarczy `VisionClient.calibrate(render)` (patrz `example_sim_client.py`).
+**Kalibracja na scenach z symulatora** (Osoba 2, `visual_pipeline/server.py`): nagłówek `calib`
+(`neutral` / `left` / `right` / `turn_left` / `turn_right` / `finish`), po stronie symulatora
+wystarczy `VisionClient.calibrate(render)` (patrz `example_sim_client.py`). Kalibracja syntetyczna
+dawała w MuJoCo `thrust` = 0, bo jasność sceny różni się od kalibracyjnej.
+
+Sprawdzenie z prawdziwym FlyVis + MuJoCo (punkt planu domknięcia „O1/O2: potwierdzić z FlyVis"):
+- `example_sim_client.py`: kalibracja na scenach MuJoCo 13 s, potem ~22 ms na klatkę z przesyłem,
+  `unmatched_ids` 0. Przy obrocie w prawo 30°/s `yaw` = −1 (hamuje obrót). Po kalibracji cel z lewej
+  → `yaw −1,00` (dobrze), cel z prawej → `yaw −0,25` (powinno być +). `thrust` waha się 0–0,83,
+  `roll` −1…+0,48; pierwsze klatki po resecie `thrust` 0 / `roll` −1.
+- `check_optomotor.py` (pełna kalibracja syntetyczna): obrót −90°/s i +90°/s dają ten sam
+  `yaw +0,40`. Komenda yaw prawie nie zależy od kierunku obrotu (`optomotor_yaw_diff` −0,17),
+  więc odruch **nie jest potwierdzony**. Wejście ruchu do BANC ma poprawny kierunek
+  (`check_rotation_banc.py` 4/4), więc słaby sygnał kierunkowy powstaje na ścieżce BANC → dekoder.
 
 ## Znane ograniczenia
 
-- Lewa strona: orientacja z symetrii i DRA, a nie z danych T4 lewej strony (które wskazują zwrot przeciwny). Przyczyna rozbieżności niezbadana; podejrzenie: adnotacje podtypów T4 po lewej.
-- Walidacja par kolumnowych jest częściowo cykliczna (pozycje typów innych niż Mi1 i T4/Mi4/Mi9/Tm3 liczone z partnerów).
+- Lewa strona: orientacja z symetrii i DRA, bo dane T4 lewej strony są za słabe do samodzielnego dopasowania (za mało opisanych wejść T4).
+- Pozycje T5, CT1 i neuronów bez szkieletu (24% po prawej, 61% po lewej) nadal liczone z partnerów.
 - Precyzja pozycji ~1 kolumna (uproszczone szkielety, Isomap zakrzywionej medulli).
+- Pokrycie lewego oka ograniczone adnotacjami BANC (72% neuronów lewego płata bez typu).
 
 ## Do zrobienia
 
-1. ~~Kalibracja kontrolera na scenach z symulatora~~ — protokół gotowy, sprawdzić z FlyVis + MuJoCo.
-2. Szkielety dla pozostałych typów: mniej cykliczności, większe pokrycie.
-3. Sprawdzić adnotacje T4 po lewej stronie BANC (rozbieżność 180°).
+1. Osoba 3: `DroneEnv` z oczami `drone_eyes.py` i `VisionClient.calibrate(render)` po starcie serwera.
