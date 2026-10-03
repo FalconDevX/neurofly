@@ -69,3 +69,40 @@ def test_master_world_mode_fits_from_worker_stats(tmp_path):
     assert np.abs(np.array(m.M)).sum() > 0 and task["kind"] == "eval"
     m.handle({"type": "result", "kind": "eval", "name": "A", "tag": "after", "eval": ev})
     assert WorldDecoder.is_world_file(tmp_path / "w.npz")
+
+
+def test_master_mid_validation_keeps_best_weights(tmp_path):
+    import argparse
+
+    from train_distributed import Master
+
+    a = argparse.Namespace(plan="B", episodes=8, batch=2, max_bearing=90.0, init=None, seed=0,
+                           out=tmp_path / "w.npz", port=0, world=True, workers=1, eval_every=4)
+    m = Master(a)
+    dec = WorldDecoder(8)
+    m.handle({"type": "ping", "name": "A", "world": True})
+    m.handle({"type": "hello", "name": "A", "M": dec.to_matrix().tolist(), "init": True,
+              "calib": {"yaw_axis_sign": -1.0, "hover_thrust": 0.5, "pitch_trim": 0.0}})
+    ev = lambda r, d: {"episodes": [{"world": 1, "reached": False, "outcome": "x", "min_dist": d}],  # noqa: E731
+                       "reached": r, "n": 6, "mean_min_dist": d, "mean_final_deg": 0.0}
+    task = m.handle({"type": "result", "kind": "eval", "name": "A", "tag": "before", "eval": ev(0, 18.0)})
+    tags = []
+    for _ in range(20):
+        if task["kind"] == "train":
+            st = WorldDecoder(8)
+            for x, s, t in _data(8, n=20):
+                st.add(x, s, t)
+            metrics = [{**e, "world": 1, "outcome": "cel", "min_dist": 0.5, "loss": 0.1} for e in task["episodes"]]
+            task = m.handle({"type": "result", "kind": "train", "name": "A", "stats": st.stats(as_lists=True),
+                             "metrics": metrics})
+        elif task["kind"] == "eval":
+            tags.append(task["tag"])
+            good = task["tag"] == "mid@4"  # najlepsza walidacja w środku, końcowa gorsza
+            task = m.handle({"type": "result", "kind": "eval", "name": "A", "tag": task["tag"],
+                             "eval": ev(4 if good else 1, 3.0 if good else 9.0)})
+        else:
+            break
+    assert "mid@4" in tags and tags[-1] == "after"
+    assert m.best["tag"] == "mid@4"
+    best = WorldDecoder.load(tmp_path / "w_best.npz")
+    assert best.to_matrix().shape == m.M.shape

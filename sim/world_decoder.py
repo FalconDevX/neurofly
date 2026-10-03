@@ -34,6 +34,17 @@ def drone_sensors(height: float, vel_world, yaw: float, gyro) -> np.ndarray:
     return np.array([height - 1.0, vel_world[2], v_fwd, v_left, *gyro], dtype=float)
 
 
+def sample_weight(bearing_rad: float, s: np.ndarray) -> float:
+    """Waga próbki DAgger: większość klatek to „cel prawie na wprost, nic nie rób”, więc trudne stany
+    dostają więcej: duży kąt do celu (> 20°), błąd wysokości > 0.3 m, szybki obrót (|gyro| > 1 rad/s,
+    np. po skręcie albo podmuchu). Kolejne warunki się sumują: 1, 3, 5 albo 7."""
+    w = 1.0
+    w += 2.0 * (abs(bearing_rad) > np.deg2rad(20))
+    w += 2.0 * (abs(s[0]) > 0.3)  # s[0] = wysokość − 1 m
+    w += 2.0 * (np.linalg.norm(s[4:7]) > 1.0)
+    return w
+
+
 class WorldDecoder:
     def __init__(self, n_banc: int, lam: float = 1e-2) -> None:
         self.n_banc, self.n_s, self.lam = n_banc, len(SENSORS), lam
@@ -64,16 +75,16 @@ class WorldDecoder:
         self.b_ctl = np.zeros((m, len(CTL_AXES)))
         self.n = 0
 
-    def add(self, x: np.ndarray, s: np.ndarray, target) -> np.ndarray:
-        """Dopisuje parę (cechy, komenda nauczyciela). Zwraca kwadraty błędów [thrust, roll, pitch, yaw]
-        obecnych wag (przed dopasowaniem) — do metryk osobno dla osi."""
+    def add(self, x: np.ndarray, s: np.ndarray, target, weight: float = 1.0) -> np.ndarray:
+        """Dopisuje parę (cechy, komenda nauczyciela) z wagą ``weight`` (trudne próbki > 1, patrz
+        ``sample_weight``). Zwraca kwadraty błędów [thrust, roll, pitch, yaw] obecnych wag (przed dopasowaniem)."""
         x = np.nan_to_num(x)
         z = np.r_[x, s]
         y_ctl = np.array([target.thrust, target.roll, target.pitch])
-        self.A_yaw += np.outer(x, x)
-        self.b_yaw += x * target.yaw
-        self.A_ctl += np.outer(z, z)
-        self.b_ctl += np.outer(z, y_ctl)
+        self.A_yaw += weight * np.outer(x, x)
+        self.b_yaw += weight * x * target.yaw
+        self.A_ctl += weight * np.outer(z, z)
+        self.b_ctl += weight * np.outer(z, y_ctl)
         self.n += 1
         pred = np.clip(self.decode_raw(x, s), [0, -1, -1, -1], 1)  # błąd po przycięciu, jak w locie
         return (pred - np.r_[y_ctl, target.yaw]) ** 2

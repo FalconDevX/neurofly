@@ -67,6 +67,10 @@ class Master:
         self.rng = np.random.default_rng(args.seed)
         self.M = None
         self.ref = None  # kalibracja pierwszego workera (znak osi yaw, trymy)
+        self.best = None  # najlepsze wagi według ewaluacji na stałych światach (--world)
+        self.evals = []  # ewaluacje: przed, w trakcie (co --eval-every epizodów), po
+        self.mid_pending: dict[str, np.ndarray] = {}  # tag ewaluacji w trakcie → oceniane wagi
+        self.next_eval = getattr(args, "eval_every", 0) or 0
         self.wdec = None  # --world: WorldDecoder (statystyki DAgger sumowane od workerów, wagi z regresji)
         if args.init:
             d = np.load(args.init)
@@ -125,6 +129,12 @@ class Master:
         if not self.eval_pending["before"]:  # ewaluacja wag startowych; inni trenują równolegle
             self.eval_pending["before"] = True
             return {"kind": "eval", "tag": "before", "M": self.M0.tolist()}
+        if (getattr(a, "world", False) and self.next_eval and self.done_episodes >= self.next_eval
+                and self.next_episode < a.episodes):  # walidacja w trakcie: bieżące wagi na stałych światach
+            tag = f"mid@{self.done_episodes}"
+            self.next_eval += a.eval_every
+            self.mid_pending[tag] = self.M.copy()
+            return {"kind": "eval", "tag": tag, "M": self.M.tolist()}
         if self.next_episode < a.episodes:
             eps = []
             for _ in range(min(a.batch, a.episodes - self.next_episode)):
@@ -215,12 +225,32 @@ class Master:
                       f"beta {m['beta']:.2f}  loss {m['loss']:.4f}  ({self.done_episodes}/{self.args.episodes})",
                       flush=True)
         elif kind == "result" and msg["kind"] == "eval":
-            setattr(self, msg["tag"], msg["eval"])
-            show(f"[{who}] {'przed treningiem' if msg['tag'] == 'before' else 'po treningu    '}", msg["eval"])
+            tag, ev = msg["tag"], msg["eval"]
+            M_eval = self.M0 if tag == "before" else self.mid_pending.pop(tag, None) if tag.startswith("mid") else self.M
+            self.consider_best(tag, ev, M_eval)
+            if tag.startswith("mid"):
+                show(f"[{who}] po {tag[4:]:>4s} epizodach", ev)
+                return self.task(name)
+            setattr(self, tag, ev)
+            show(f"[{who}] {'przed treningiem' if tag == 'before' else 'po treningu    '}", ev)
             if msg["tag"] == "after":
                 self.save()
                 self.finished = True
         return self.task(name)
+
+    def consider_best(self, tag: str, ev: dict, M) -> None:
+        """Zapamiętuje wagi z najlepszą ewaluacją: najpierw liczba celów, potem średnio najbliżej (--world)."""
+        if "episodes" not in ev or M is None:
+            return
+        done = 0 if tag == "before" else int(tag[4:]) if tag.startswith("mid") else self.done_episodes
+        self.evals.append({"tag": tag, "after_episodes": done, "reached": ev["reached"], "n": ev["n"],
+                           "mean_min_dist": ev["mean_min_dist"]})
+        score = (ev["reached"], -ev["mean_min_dist"])
+        if self.best is None or score > self.best["score"]:
+            self.best = {"score": score, "tag": tag, "M": np.array(M), "reached": ev["reached"],
+                         "mean_min_dist": ev["mean_min_dist"]}
+            print(f"  nowe najlepsze wagi ({tag}): cel {ev['reached']}/{ev['n']}, średnio najbliżej "
+                  f"{ev['mean_min_dist']:.1f} m", flush=True)
 
     def save(self) -> None:
         a = self.args
@@ -234,11 +264,17 @@ class Master:
             from sim.world_decoder import WorldDecoder
 
             WorldDecoder.for_matrix(self.M).save(out, **meta, samples=self.wdec.n if self.wdec else 0)
+            if self.best is not None:  # końcowe wagi mogą być gorsze niż któraś walidacja w trakcie
+                best = out.with_name(out.stem + "_best.npz")
+                WorldDecoder.for_matrix(self.best["M"]).save(best, **meta, best_from=self.best["tag"])
+                print(f"najlepsze wagi ({self.best['tag']}: cel {self.best['reached']}, średnio najbliżej "
+                      f"{self.best['mean_min_dist']:.1f} m) → {best}", flush=True)
         else:
             np.savez(out, M=self.M, hover_thrust=self.ref["hover_thrust"], pitch_trim=self.ref["pitch_trim"],
                      meta=np.array(repr(meta)))
         out.with_suffix(".json").write_text(json.dumps(
             {"args": vars(a), "workers": self.workers, "before": self.before, "after": self.after,
+             "evals": self.evals, "best": {k: v for k, v in (self.best or {}).items() if k not in ("M", "score")},
              "M_before": self.M0.tolist(), "M_after": self.M.tolist(), "history": self.history},
             default=str, indent=1))
         show("przed treningiem", self.before)
@@ -425,6 +461,8 @@ def main() -> None:
     ap.add_argument("--init", type=Path, help="wagi startowe (.npz); domyślnie z kalibracji pierwszego workera")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--world", action="store_true", help="lot do celu w świecie Osoby 3 (master i workerzy)")
+    ap.add_argument("--eval-every", type=int, default=50,
+                    help="--world, master: walidacja co tyle epizodów i zapis najlepszych wag (0 = tylko przed/po)")
     ap.add_argument("--world-init", type=Path, default=None,
                     help="worker --world: dekoder zawisu do startu yaw (domyślnie planB_distributed / planB_dn)")
     ap.add_argument("--beacon-scale", type=float, default=4.0, help="worker --world: grubość masztu celu")

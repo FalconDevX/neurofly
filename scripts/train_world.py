@@ -84,6 +84,18 @@ def main() -> None:
     print(f"yaw na start: {args.yaw_init or 'brak (0)'}", flush=True)
     before = runner.evaluate(EVAL_WORLDS)
     show_world("przed treningiem", before)
+    best = {"score": (before["reached"], -before["mean_min_dist"]), "M": dec.to_matrix(), "tag": "before"}
+    evals = [{"tag": "before", "after_episodes": 0, "reached": before["reached"], "n": before["n"],
+              "mean_min_dist": before["mean_min_dist"]}]
+
+    def consider(tag: str, ev: dict, done: int) -> None:
+        evals.append({"tag": tag, "after_episodes": done, "reached": ev["reached"], "n": ev["n"],
+                      "mean_min_dist": ev["mean_min_dist"]})
+        score = (ev["reached"], -ev["mean_min_dist"])
+        if score > best["score"]:
+            best.update(score=score, M=dec.to_matrix(), tag=tag)
+            print(f"  nowe najlepsze wagi ({tag})", flush=True)
+
     history = []
     for ep in range(args.episodes):
         t = time.perf_counter()
@@ -100,15 +112,22 @@ def main() -> None:
             ev = runner.evaluate(EVAL_WORLDS)
             history[-1]["eval"] = ev
             show_world(f"  po {ep + 1} epizodach", ev)
+            consider(f"mid@{ep + 1}", ev, ep + 1)
     after = runner.evaluate(EVAL_WORLDS)
+    consider("after", after, args.episodes)
     show_world("przed treningiem", before)
     show_world("po treningu     ", after)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     dec.save(args.out, episodes=args.episodes, reached_before=before["reached"], reached_after=after["reached"],
              samples=dec.n)
+    from sim.world_decoder import WorldDecoder
+
+    best_path = args.out.with_name(args.out.stem + "_best.npz")
+    WorldDecoder.for_matrix(best["M"]).save(best_path, best_from=best["tag"])
+    print(f"najlepsze wagi ({best['tag']}) → {best_path}")
     js = args.out.with_suffix(".json")
     js.write_text(json.dumps({"args": vars(args), "calibration": calib, "before": before, "after": after,
-                              "history": history}, default=str, indent=1))
+                              "evals": evals, "best": best["tag"], "history": history}, default=str, indent=1))
     print(f"zapisano {args.out} ({dec.n} próbek, {time.perf_counter() - t0:.0f} s)")
     subprocess.run([sys.executable, str(ROOT / "scripts" / "plot_training.py"), str(js)], check=False)
 

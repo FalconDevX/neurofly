@@ -106,6 +106,12 @@ def main() -> None:
         crash = np.array([str(h["outcome"]).startswith(("wywrotka", "poza")) for h in hist], float)
         ax["rate"].plot(ep, 100 * rolling(hit, w), color=SERIES[0], linewidth=2, label="cel")
         ax["rate"].plot(ep, 100 * rolling(crash, w), color=SERIES[1], linewidth=2, label="wywrotka / poza planszą")
+        evs = d.get("evals") or []
+        if evs:  # walidacje na stałych światach (przed / w trakcie / po) — bez nauczyciela
+            xe = [e["after_episodes"] for e in evs]
+            ye = [100 * e["reached"] / max(e["n"], 1) for e in evs]
+            ax["rate"].plot(xe, ye, color=INK, linewidth=1, linestyle=":", marker="o", markersize=7,
+                            markerfacecolor=SURFACE, markeredgewidth=2, label="walidacja: cel (6 światów)")
         ax["rate"].set_ylim(0, 100)
         style(ax["rate"], f"Wynik epizodu (udział w oknie {w} ep.)", "%")
         legend(ax["rate"])

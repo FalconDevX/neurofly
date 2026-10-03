@@ -267,7 +267,10 @@ class WorldRunner:
             if learn:
                 target = teacher(env, self.height, self.speed)
                 if pilot.world is not None:  # DAgger: dane do statystyk, wagi dopasowuje wywołujący (fit)
-                    sq.append(pilot.world.add(cmd.debug["x"], cmd.debug["sensors"], target))
+                    from sim.world_decoder import sample_weight
+
+                    sens = cmd.debug["sensors"]
+                    sq.append(pilot.world.add(cmd.debug["x"], sens, target, sample_weight(bearing(env), sens)))
                 else:
                     losses.append(dec.fit_step(cmd.debug["motor_features"], target, apply=False))
                 if rng.random() < beta:
