@@ -8,11 +8,12 @@ Poza zakresem: propagacja BANC/VNC, motoneurony, sterowanie.
 
 ```python
 from visual_pipeline import VisionBridge
-from banc_control import BancController
+from banc_control import BancController, Connectome
 
 bridge = VisionBridge(fps=30)
-records = bridge.step(frame_left, frame_right)   # list[BancActivation]
-# szybciej: act = bridge.step_arrays(...)  →  bridge.root_ids, bridge.cell_types, act
+ctrl = BancController(Connectome.from_banc())
+cmd = ctrl.step(bridge.step_batch(frame_left, frame_right), imu)  # szybka ścieżka, ten sam proces
+records = bridge.step(frame_left, frame_right)   # list[BancActivation], np. do JSON
 ```
 
 ## Instalacja (Python 3.12)
@@ -84,6 +85,43 @@ Braki wynikają głównie z BANC:
 
 Walidacja: 77–98% silnie połączonych par kolumnowych (np. Mi1 → T4a) trafia w tę samą lub
 sąsiednią kolumnę, losowo mediana ~10 kolumn.
+
+## Etap 4: pętla zamknięta i czas rzeczywisty
+
+```bash
+python scripts/run_closed_loop.py                       # pełna pętla ze stubami
+python scripts/run_closed_loop.py --yaw-only --no-imu   # sam wzrok steruje kursem
+```
+
+Kamera stereo → `VisionBridge` → `BancController` → `ToyDrone` → kamera. Gazebo (Osoba 3)
+zastępuje `FakeStereoCamera` (niebo, ziemia, ciemny pionowy pas = cel) i `ToyDrone`.
+Klatki z dowolnej kamery skaluje `visual_pipeline.frames.prepare_frame` (np. 640×480 RGBA).
+
+**Szybka ścieżka `VisualBatch`** (`bridge.step_batch`, obsługiwana przez `BancController`):
+te same dane co `list[BancActivation]`, ale jako tablice. Lista ~18k obiektów kosztowała
+~25–30 ms na klatkę po stronie wzroku plus pętlę Pythona w kontrolerze. JSON i lista działają dalej.
+
+Czas klatki (RTX 3070 Ti, pełny BANC 175k neuronów):
+
+| Krok | przed | po |
+|---|---|---|
+| kamera (stub) | 7,5 | 7,5 |
+| Retina + mapper | 1,0 | 1,0 |
+| FlyVis | 16,6 | 6,1 |
+| rekordy `BancActivation` | 30,4 | 0 |
+| kontroler BANC (Osoba 2) | 44,9 | 34,9 |
+| **razem** | **101 ms (9,9 FPS)** | **49,8 ms (20 FPS)** |
+
+Część Osoby 1 to ~7 ms. Do 30 FPS brakuje po stronie kontrolera (Osoba 2: GPU / podgraf).
+
+Zachowanie w pętli:
+- ID zgodne: `unmatched_ids = 0` dla wszystkich 17 809 neuronów.
+- Pętla otwarta: cel z lewej → `yaw −1,00`, z prawej → `yaw +0,61` (skręt do celu).
+- Wymuszony obrót ±90°/s → komenda przeciwna (odruch optomotoryczny, stabilizuje kurs). Znak wzroku jest poprawny.
+- Pełna pętla: dron obraca się bez końca. Przyczyna: sprzężenie gyro → haltery w kontrolerze (`roll_rate + yaw_rate`, znak kalibrowany tylko na przechyle). Z `--no-imu` obrót znika.
+- `--yaw-only --no-imu`: kurs stabilny (kąt do celu 35–58°), ale dron nie skręca do celu. Komendy nasycają się ±1, a reakcja na ruch obrazu przeważa nad przyciąganiem do celu.
+
+Do Osoby 2: rozdzielić yaw_rate od roll_rate w haltery, zmniejszyć wzmocnienie yaw, skok na starcie po `dyn.reset()`.
 
 ## Znane ograniczenia
 

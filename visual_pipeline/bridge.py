@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from flygym.vision.retina import Retina
 
-from banc_control.contracts import BancActivation
+from banc_control.contracts import BancActivation, VisualBatch
 
 from .flyvis_step import FlyVisStepper
+from .frames import prepare_frame
 from .retina_mapper import RetinaMapper
 
 MAP_FILE = Path(__file__).with_name("flyvis_banc_map.csv")
@@ -20,7 +22,7 @@ EYES = ("left", "right")
 class VisionBridge:
     """``step(frame_left, frame_right)`` → ``list[BancActivation]`` (``banc_root_id`` = ``banc_888_id``).
 
-    Klatki: ``uint8`` RGB o kształcie (512, 450, 3), tyle oczekuje flygym Retina.
+    Klatki: RGB z dowolnej kamery; ``prepare_frame`` skaluje je do (512, 450, 3) dla flygym Retina.
     Aktywność to surowa wartość z FlyVis; neuron BANC przypisany kilku komórkom FlyVis
     dostaje ich średnią.
     """
@@ -42,22 +44,46 @@ class VisionBridge:
 
         self.root_ids = np.concatenate([r for *_, r, _ in self._eyes])
         self.cell_types = np.concatenate([c for *_, c in self._eyes])
+        # Listy Pythona raz na starcie: rekordy co klatkę bez konwersji skalarów numpy.
+        self._root_list = self.root_ids.tolist()
+        self._type_list = [str(t) for t in self.cell_types]
+        self.last_timings: dict[str, float] = {}  # ms ostatniego kroku, do profilowania
+
+    def reset(self) -> None:
+        """Stan FlyVis jak po 1 s szarego obrazu (np. przed nową sceną kalibracyjną)."""
+        self.stepper.reset(batch_size=len(EYES))
 
     def step_arrays(self, frame_left: np.ndarray, frame_right: np.ndarray) -> np.ndarray:
         """Szybka ścieżka: aktywność w kolejności ``self.root_ids`` / ``self.cell_types``."""
-        shape = (self.retina.nrows, self.retina.ncols, 3)
-        for f in (frame_left, frame_right):
-            if f.shape != shape:
-                raise ValueError(f"frame has shape {f.shape}, Retina expects {shape}")
+        t0 = time.perf_counter()
+        frame_left, frame_right = prepare_frame(frame_left), prepare_frame(frame_right)
         lum = np.stack([self.mapper.to_flyvis(self.retina.raw_image_to_hex_pxls(f), eye)
                         for f, eye in zip((frame_left, frame_right), EYES)])
+        t1 = time.perf_counter()
         act = self.stepper.step(lum)
-        return np.concatenate([
+        t2 = time.perf_counter()
+        out = np.concatenate([
             np.bincount(codes, weights=act[b, fv_idx]) / counts
             for b, (fv_idx, codes, counts, _, _) in enumerate(self._eyes)
         ])
+        t3 = time.perf_counter()
+        self.last_timings = {"retina": (t1 - t0) * 1e3, "flyvis": (t2 - t1) * 1e3, "banc_map": (t3 - t2) * 1e3}
+        return out
 
     def step(self, frame_left: np.ndarray, frame_right: np.ndarray) -> list[BancActivation]:
         act = self.step_arrays(frame_left, frame_right)
-        return [BancActivation(int(r), str(c), float(a))
-                for r, c, a in zip(self.root_ids, self.cell_types, act)]
+        t0 = time.perf_counter()
+        records = list(map(BancActivation, self._root_list, self._type_list, act.tolist()))
+        self.last_timings["records"] = (time.perf_counter() - t0) * 1e3
+        return records
+
+    def step_batch(self, frame_left: np.ndarray, frame_right: np.ndarray) -> VisualBatch:
+        """Jak ``step``, ale bez tworzenia obiektów: dla ``BancController`` w tym samym procesie."""
+        return VisualBatch(self.root_ids, self.step_arrays(frame_left, frame_right))
+
+    def settle(self, frame_left: np.ndarray, frame_right: np.ndarray, n_frames: int = 30) -> VisualBatch:
+        """Odpowiedź na scenę statyczną: reset FlyVis, potem ``n_frames`` tej samej klatki."""
+        self.reset()
+        for _ in range(n_frames - 1):
+            self.step_arrays(frame_left, frame_right)
+        return self.step_batch(frame_left, frame_right)
