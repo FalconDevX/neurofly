@@ -120,6 +120,9 @@ kolorowane `super_class`, 863 szkielety SWC neuronów lotu, tryby Eksploruj / Ob
 cały / mózg / VNC, wykres klas i regionów, inspektor neuronu z prawdziwymi partnerami (top 8 z edgelisty),
 wyszukiwarka, komendy drona. Wszystkie liczby prawdziwe — nie wstawiać danych z mockupów. Dane: `scripts/export_anatomy.py`, `scripts/export_viz_data.py`.
 
+Eksplorator lokalnie: `python scripts/explorer.py` (http://localhost:8000) — serwer stdlib, strona `explorer/`
+(HTML + JS, three.js z CDN, bez npm/builda), dane prosto z `data/viz/`. Zastąpił wersję Next.js (gałąź `osoba2-nextjs-explorer`).
+
 ## Uwagi do repo
 
 - `docs/prezentacja/` (NeuroFly.pptx + build.js) powstało w innej sesji; nie było weryfikowane względem wyników z v888.

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeuroFly BANC Explorer</title>
+  <meta name="description" content="Connectome BANC v888 w 3D z renderem na GPU: somy, szkielety neuronów lotu, partnerzy synaptyczni i komendy drona.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Sora:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="brand">
+        <img src="logo-dark.png" alt="" width="46" height="35">
+        <div><b>Neuro<span>Fly</span></b><small>BANC v888 · eksplorator connectomu · render GPU</small></div>
+      </div>
+      <nav class="tabs" id="tabs" role="tablist" aria-label="Tryb widoku"></nav>
+      <div class="search" id="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <input id="q" type="search" placeholder="Szukaj neuronu lotu: typ lub root ID…" aria-label="Szukaj neuronu">
+        <kbd>Ctrl K</kbd>
+        <div class="results" id="results" hidden></div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <aside class="side" id="side"></aside>
+
+      <main class="stage">
+        <div class="stage-top">
+          <div class="pills" id="pills" role="group" aria-label="Zakres"></div>
+          <span class="note" id="mode-note"></span>
+        </div>
+        <div class="view" id="view">
+          <div class="loading" id="loading">Wczytywanie BANC v888…</div>
+          <div class="labels" id="labels" aria-hidden="true"></div>
+          <div class="tools">
+            <button data-act="reset" title="Wyśrodkuj widok" aria-label="Wyśrodkuj widok"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a7 7 0 1 0 0 14a7 7 0 1 0 0-14M12 10a2 2 0 1 0 0 4a2 2 0 1 0 0-4M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+            <button data-act="zoom" data-arg="0.8" title="Przybliż" aria-label="Przybliż"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button data-act="zoom" data-arg="1.25" title="Oddal" aria-label="Oddal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <button data-act="side" title="Widok z boku / z przodu" aria-label="Widok z boku / z przodu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg></button>
+            <button data-act="spin" id="spin" title="Obracaj" aria-label="Obracaj" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button>
+          </div>
+        </div>
+        <div class="legend" id="legend"></div>
+      </main>
+
+      <section class="right" id="right"></section>
+    </div>
+
+    <p class="note foot">
+      Źródło: BANC v888 (<a href="https://doi.org/10.7910/DVN/7WTH1N">Harvard Dataverse</a>). Somy z kolumny <code>position</code>,
+      szkielety z oficjalnych plików SWC (bez gałązek &lt; 20 µm), partnerzy i liczby synaps z <code>banc_888_edgelist_simple_v2</code>.
+      Aktywność i komendy liczy nasz model (dynamika, znaki neuroprzekaźników, wejście wzroku jako lewa/prawa strona), więc to nie są pomiary z BANC.
+      Render: WebGL (three.js) — wszystkie somy w jednym wywołaniu rysowania, filtry w shaderach. Serwer: <code>python scripts/explorer.py</code>.
+    </p>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
