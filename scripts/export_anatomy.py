@@ -31,33 +31,44 @@ MIN_BRANCH_UM = 20.0  # krótsze gałązki pomijamy — przy tej skali są niewi
 
 
 def load_swc(path: Path) -> list[list[tuple[float, float, float]]]:
-    """Zwraca listę polilinii (µm), uproszczonych do odstępu ~NODE_SPACING_UM; rozgałęzienia zachowane."""
+    """Polilinie szkieletu (µm). Usuwa końcowe gałązki krótsze niż MIN_BRANCH_UM i rozrzedza
+    węzły do ~NODE_SPACING_UM; pień i rozgałęzienia zostają."""
     rows = [ln.split() for ln in path.read_text().splitlines() if ln and not ln.startswith("#")]
     a = np.array([r for r in rows if len(r) == 7], dtype=float)
-    ids, xyz, parent = a[:, 0].astype(int), a[:, 2:5] / 1000.0, a[:, 6].astype(int)
+    ids, xyz, parent_id = a[:, 0].astype(int), a[:, 2:5] / 1000.0, a[:, 6].astype(int)
+    row = {i: k for k, i in enumerate(ids)}
+    parent = np.array([row.get(p, -1) for p in parent_id])
     children: dict[int, list[int]] = {}
     for k, p in enumerate(parent):
         children.setdefault(p, []).append(k)
-    roots = children.get(-1, [])
-    lines, stack = [], [(r, None) for r in roots]
+
+    order, stack = [], list(children.get(-1, []))  # rodzic przed dziećmi
     while stack:
-        k, start = stack.pop()
-        line = [xyz[start]] if start is not None else []
-        line.append(xyz[k])
-        cur = k
-        while True:
-            kids = children.get(ids[cur], [])
-            if len(kids) != 1:
-                break
-            cur = kids[0]
-            if np.linalg.norm(xyz[cur] - line[-1]) >= NODE_SPACING_UM:
-                line.append(xyz[cur])
-        if not np.allclose(line[-1], xyz[cur]):
-            line.append(xyz[cur])
-        if len(line) > 1 and np.linalg.norm(np.diff(line, axis=0), axis=1).sum() >= MIN_BRANCH_UM:
-            lines.append([tuple(np.round(p, 1)) for p in line])
-        stack += [(c, cur) for c in children.get(ids[cur], [])]
-    return lines
+        k = stack.pop()
+        order.append(k)
+        stack += children.get(k, [])
+    depth = np.zeros(len(ids))  # najdłuższa droga od węzła do liścia w jego poddrzewie
+    for k in reversed(order):
+        p = parent[k]
+        if p >= 0:
+            depth[p] = max(depth[p], depth[k] + np.linalg.norm(xyz[k] - xyz[p]))
+    keep = depth >= MIN_BRANCH_UM
+    keep[children.get(-1, [])] = True
+
+    lines = []
+    for k in order:
+        p = parent[k]
+        if not keep[k] or p < 0:
+            continue
+        kept_kids = [c for c in children.get(p, []) if keep[c]]
+        starts_line = not lines or len(kept_kids) > 1 or lines[-1][-1] is not None and lines[-1][1] != p
+        if starts_line:
+            lines.append([[xyz[p]], k])
+        line, _ = lines[-1]
+        if np.linalg.norm(xyz[k] - line[-1]) >= NODE_SPACING_UM or not any(keep[c] for c in children.get(k, [])):
+            line.append(xyz[k])
+        lines[-1][1] = k
+    return [[tuple(np.round(pt, 1)) for pt in line] for line, _ in lines if len(line) > 1]
 
 
 def main() -> None:
