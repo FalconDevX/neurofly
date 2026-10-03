@@ -368,7 +368,8 @@ def run_worker(args) -> None:
         init = args.world_init if args.world_init and args.world_init.exists() else default_yaw_init()
         print(f"[{name}] yaw na start: {init or 'brak pliku — od zera (master weźmie wagi od innego workera)'}",
               flush=True)
-        env, pilot, runner, calib = setup(init, args.beacon_scale, args.max_time)
+        env, pilot, runner, calib = setup(init, args.beacon_scale, args.max_time, args.beacon_alpha,
+                                          args.sensors, args.motor_tau, args.vision_range, args.beacon_color)
         ctrl, dec = pilot.ctrl, pilot.ctrl.decoder
         wdec = pilot.world
     else:
@@ -465,7 +466,13 @@ def main() -> None:
                     help="--world, master: walidacja co tyle epizodów i zapis najlepszych wag (0 = tylko przed/po)")
     ap.add_argument("--world-init", type=Path, default=None,
                     help="worker --world: dekoder zawisu do startu yaw (domyślnie planB_distributed / planB_dn)")
-    ap.add_argument("--beacon-scale", type=float, default=4.0, help="worker --world: grubość masztu celu")
+    ap.add_argument("--beacon-scale", type=float, default=1.0, help="worker --world: rozmiar znacznika celu")
+    ap.add_argument("--beacon-alpha", type=float, default=None, help="worker --world: przezroczystość znacznika (1 = pełny)")
+    ap.add_argument("--sensors", choices=("real", "ideal"), default="real", help="worker --world: czujniki drona")
+    ap.add_argument("--beacon-color", choices=("scene", "dark-red"), default="dark-red",
+                    help="kolor celu: ciemnoczerwony (kontrast jasności dla FlyVis) albo ze sceny (pomarańczowy)")
+    ap.add_argument("--motor-tau", type=float, default=0.04, help="worker --world: opóźnienie silników [s]")
+    ap.add_argument("--vision-range", type=float, default=float("inf"), help="worker --world: bliżej yaw z BANC, dalej z GPS [m]")
     ap.add_argument("--max-time", type=float, default=40.0, help="worker --world: s na epizod")
     ap.add_argument("--workers", type=int, default=2, help="ilu workerów musi się zgłosić (inaczej przerwanie)")
     ap.add_argument("--wait-join", type=float, default=120.0, help="s na zgłoszenie się wszystkich workerów")

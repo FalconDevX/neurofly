@@ -69,6 +69,10 @@ def main():
                         help="wagi dekodera (train_decoder.py): pilotem jest BANC (sim/banc_pilot.py)")
     parser.add_argument("--banc-forward", type=float, default=1.0, help="m/s do przodu z --banc")
     parser.add_argument("--beacon-scale", type=float, default=1.0, help="z --banc: szerszy cel (prostopadłościan, w pamięci)")
+    parser.add_argument("--beacon-alpha", type=float, default=None, help="z --banc: przezroczystość znacznika (1 = pełny)")
+    parser.add_argument("--vision-range", type=float, default=float("inf"), help="z --banc: bliżej celu yaw z BANC, dalej z GPS [m]")
+    parser.add_argument("--beacon-color", choices=("scene", "dark-red"), default="dark-red",
+                    help="kolor celu: ciemnoczerwony (kontrast jasności dla FlyVis) albo ze sceny (pomarańczowy)")
     parser.add_argument("--wind-speed", type=float, default=8.0, help="średnia prędkość wiatru [m/s] (CapsLock)")
     parser.add_argument("--start-noise", action="store_true",
                         help="losowy przechył/prędkość na starcie (jak przy uczeniu); domyślnie start w idealnym zawisie")
@@ -87,7 +91,8 @@ def main():
     if args.banc:
         from sim.banc_pilot import BancPilot
 
-        banc = policy = BancPilot(args.banc, args.banc_forward, beacon_scale=args.beacon_scale)
+        banc = policy = BancPilot(args.banc, args.banc_forward, beacon_scale=args.beacon_scale, beacon_alpha=args.beacon_alpha,
+                                  vision_range=args.vision_range, beacon_color=args.beacon_color)
         if not banc.assist:
             args.control = "angle"  # wagi z train_world.py: BANC daje przechył, symulator go utrzymuje
     sensors_mode = args.sensors or ("ideal" if args.banc else "real")

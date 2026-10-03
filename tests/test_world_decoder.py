@@ -106,3 +106,23 @@ def test_master_mid_validation_keeps_best_weights(tmp_path):
     assert m.best["tag"] == "mid@4"
     best = WorldDecoder.load(tmp_path / "w_best.npz")
     assert best.to_matrix().shape == m.M.shape
+
+
+def test_gps_vision_arbitration_and_sensor_vector():
+    from sim.world_decoder import gps_yaw, sensors_from_obs, vision_weight
+
+    assert gps_yaw([0.4, 20.0]) < 0 and gps_yaw([-0.4, 20.0]) > 0  # GPS: + = w lewo → yaw BANC: + = w prawo
+    assert vision_weight(20.0, 8.0) < 0.01 and vision_weight(3.0, 8.0) > 0.95  # daleko GPS, blisko wzrok
+    assert vision_weight(20.0, float("inf")) == 1.0 and vision_weight(0.0, 8.0) == 1.0  # bez progu / bez GPS: BANC
+    obs = {"sensors": np.array([1.3, 0.8, -0.1, 0.0, 0.2], np.float32), "imu": np.array([0.1, 0.0, -0.3, 0, 0, 0])}
+    s = sensors_from_obs(obs)
+    np.testing.assert_allclose(s, [0.3, 0.2, 0.8, -0.1, 0.1, 0.0, -0.3], atol=1e-6)
+    obs["sensors"][0] = -1.0  # dalmierz bez odczytu → bez korekty wysokości
+    assert sensors_from_obs(obs)[0] == 0.0
+
+
+def test_yaw_weight_zero_keeps_yaw_row_out_of_far_samples():
+    dec = WorldDecoder(8)
+    for i, (x, s, t) in enumerate(_data(8, n=100)):
+        dec.add(x, s, t, yaw_weight=0.0)
+    assert dec.A_yaw.sum() == 0 and dec.A_ctl.sum() != 0  # daleko: uczymy thrust/roll/pitch, yaw nie

@@ -10,7 +10,8 @@ utrzymuje zadany przechył. BANC się nie zmienia.
 Nauczyciel (``sim.banc_pilot.teacher``) widzi prawdziwy stan. DAgger: epizody w partiach po ``--batch``; dron
 leci mieszanką (z prawdopodobieństwem beta komendą nauczyciela, beta 1 → 0 w pierwszej połowie), wszystkie
 pary (cechy, komenda nauczyciela) idą do wspólnych statystyk, po partii wagi liczone od nowa na całości.
-Światy losowe, korytarz do celu bez bloków, maszt celu ×``--beacon-scale``. Start: yaw z dekodera zawisu
+Światy losowe, korytarz do celu bez bloków, znacznik celu (czerwony prostopadłościan) ×``--beacon-scale``,
+przezroczystość ``--beacon-alpha``. Start: yaw z dekodera zawisu
 (``--yaw-init``), thrust = zawis, reszta 0.
 
 Ewaluacja (stałe światy ``EVAL_WORLDS``, bez nauczyciela) przed, co ``--eval-every`` i po. Wynik:
@@ -44,13 +45,15 @@ def default_yaw_init() -> Path | None:
     return None
 
 
-def setup(yaw_init: Path | None, beacon_scale: float = 4.0, max_time: float = 40.0):
+def setup(yaw_init: Path | None, beacon_scale: float = 1.0, max_time: float = 40.0, beacon_alpha: float | None = None,
+          sensors: str = "real", motor_tau: float = 0.04, vision_range: float = float("inf"), beacon_color: str = "dark-red"):
     """→ (env, pilot, runner, calib): pilot BANC bez wspomagania z nowym WorldDecoder, skalibrowany."""
     from sim.banc_pilot import BancPilot, WorldRunner
     from sim.world_env import WorldEnv
 
-    pilot = BancPilot(None, assist=False, brain=False, beacon_scale=beacon_scale, readout="dn", yaw_init=yaw_init)
-    env = WorldEnv(control="angle", start_noise=False, max_time=max_time)
+    pilot = BancPilot(None, assist=False, brain=False, beacon_scale=beacon_scale, readout="dn", yaw_init=yaw_init,
+                      beacon_alpha=beacon_alpha, vision_range=vision_range, beacon_color=beacon_color)
+    env = WorldEnv(control="angle", start_noise=False, max_time=max_time, sensors=sensors, motor_tau=motor_tau)
     env.reset(seed=0)
     calib = pilot.bind(env)
     return env, pilot, WorldRunner(env, pilot), calib
@@ -70,7 +73,14 @@ def main() -> None:
     ap.add_argument("--episodes", type=int, default=120)
     ap.add_argument("--batch", type=int, default=4, help="epizodów między dopasowaniami wag")
     ap.add_argument("--yaw-init", type=Path, default=default_yaw_init())
-    ap.add_argument("--beacon-scale", type=float, default=4.0)
+    ap.add_argument("--beacon-scale", type=float, default=1.0, help="rozmiar znacznika celu (1 = 1.2 × 1.2 × 2 m)")
+    ap.add_argument("--beacon-alpha", type=float, default=None, help="przezroczystość znacznika (1 = pełny; domyślnie ze sceny)")
+    ap.add_argument("--sensors", choices=("real", "ideal"), default="real", help="czujniki drona: z szumem (sim/sensors.py) albo idealne")
+    ap.add_argument("--beacon-color", choices=("scene", "dark-red"), default="dark-red",
+                    help="kolor celu: ciemnoczerwony (kontrast jasności dla FlyVis) albo ze sceny (pomarańczowy)")
+    ap.add_argument("--motor-tau", type=float, default=0.04, help="opóźnienie silników [s] (0 = natychmiast)")
+    ap.add_argument("--vision-range", type=float, default=float("inf"),
+                    help="m: bliżej celu yaw z BANC, dalej z „GPS” (inf = zawsze BANC); z check_beacon_visibility.py")
     ap.add_argument("--max-time", type=float, default=40.0)
     ap.add_argument("--eval-every", type=int, default=40)
     ap.add_argument("--seed", type=int, default=0)
@@ -79,7 +89,8 @@ def main() -> None:
     rng = np.random.default_rng(args.seed)
 
     t0 = time.perf_counter()
-    env, pilot, runner, calib = setup(args.yaw_init, args.beacon_scale, args.max_time)
+    env, pilot, runner, calib = setup(args.yaw_init, args.beacon_scale, args.max_time, args.beacon_alpha,
+                                      args.sensors, args.motor_tau, args.vision_range, args.beacon_color)
     dec = pilot.world
     print(f"yaw na start: {args.yaw_init or 'brak (0)'}", flush=True)
     before = runner.evaluate(EVAL_WORLDS)

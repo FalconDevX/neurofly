@@ -16,8 +16,9 @@ Dwa tryby (podział sterowania to NASZE ZAŁOŻENIE, nie wynik BANC):
     ``forward_speed`` trzyma ``VelocityController`` (prawdziwy stan). Dla dekoderów z ``train_decoder.py``.
 
 Kalibracja (jak w ``fly_banc.py``): ``calib="drone"`` — sceny ``DroneEnv``, ``calib="world"`` — te same ujęcia
-w bieżącym świecie. ``beacon_scale``: mnożnik szerokości celu — prostopadłościanu (zmiana w pamięci, scena na dysku bez zmian);
-cel Osoby 3 ma 30 cm szerokości, z 15–23 m to ~1° — poniżej rozdzielczości oka muszki (~5°).
+w bieżącym świecie. ``beacon_scale`` / ``beacon_alpha``: szerokość i przezroczystość celu — prostopadłościanu
+``target_box`` Osoby 3 (zmiana w pamięci, scena na dysku bez zmian). Cel ma 30 cm szerokości: z 15–23 m to ~1°,
+poniżej rozdzielczości oka muszki (~5°) — stąd pomiar widoczności (scripts/check_beacon_visibility.py).
 
 Nauczyciel (``teacher``, tylko do treningu): z prawdziwego stanu — yaw ∝ kąt do celu, pitch do prędkości
 ``speed``·max(cos kąta, 0) (najpierw obrót, potem lot), thrust do wysokości ``height`` nad terenem.
@@ -47,6 +48,21 @@ def ground_z(env) -> float:
     gid = env.model.geom("terrain").id
     dist = mujoco.mj_rayHfield(env.model, env.data, gid, pos, np.array([0.0, 0.0, -1.0]))
     return float(pos[2] - dist) if dist >= 0 else 0.0
+
+
+BEACON_DARK_RED = (0.30, 0.02, 0.02)  # FlyVis widzi tylko jasność: ciemny cel odcina się od nieba, pomarańczowy nie
+
+
+def set_beacon(model, scale: float = 1.0, alpha: float | None = None, color=None) -> None:
+    """Cel = prostopadłościan ``target_box`` ze sceny Osoby 3: ``scale`` mnoży szerokość (x, y), ``alpha`` =
+    przezroczystość (1 = pełny). Zmiana w pamięci modelu; ``sim.target.Target.reached`` czyta rozmiar z modelu."""
+    gid = model.geom("target_box").id
+    if scale != 1.0:
+        model.geom_size[gid, :2] *= scale  # szerszy w x i y, wysokość bez zmian (stoi na ziemi)
+    if color is not None:
+        model.geom_rgba[gid, :3] = color
+    if alpha is not None:
+        model.geom_rgba[gid, 3] = alpha  # target_box ma kolor w rgba (bez materiału)
 
 
 def clear_corridor(env, width: float = 3.0) -> int:
@@ -107,7 +123,8 @@ class BancPilot:
     def __init__(self, decoder_path: Path | None, forward_speed: float = 1.0, max_yaw_rate: float = 1.0,
                  calib: str = "drone", beacon_scale: float = 1.0, brain: bool = True,
                  cruise_height: float = 1.0, assist: bool | None = None, lr: float = 0.5,
-                 readout: str | None = None, yaw_init: Path | None = None) -> None:
+                 readout: str | None = None, yaw_init: Path | None = None, beacon_alpha: float | None = None,
+                 vision_range: float = float("inf"), beacon_color: str = "scene") -> None:
         """``decoder_path``: wagi ``WorldDecoder`` (``train_world.py``, plik z ``w_yaw``) albo dekoder z
         ``train_decoder.py`` (tryb ze wspomaganiem). ``decoder_path=None`` + ``assist=False``: nowy
         ``WorldDecoder`` do treningu, wiersz yaw z ``yaw_init`` (dekoder zawisu, np. planB_distributed.npz)."""
@@ -139,7 +156,9 @@ class BancPilot:
                 self.world.w_yaw[:len(w)] = w
         self.bridge = VisionBridge(fps=30, fisheye=True)
         self.forward_speed, self.max_yaw_rate, self.cruise_height = forward_speed, max_yaw_rate, cruise_height
-        self.calib, self.beacon_scale = calib, beacon_scale
+        self.calib, self.beacon_scale, self.beacon_alpha = calib, beacon_scale, beacon_alpha
+        self.beacon_color = BEACON_DARK_RED if beacon_color == "dark-red" else None
+        self.vision_range = vision_range  # warstwa zachowań: dalej od celu yaw z „GPS”, bliżej z BANC (inf = tylko BANC)
         self.view = None
         if brain:
             from sim.brain_panel import BrainView
@@ -160,8 +179,7 @@ class BancPilot:
             raise ValueError("pilot bez wspomagania wymaga WorldEnv(control='angle')")
         self.env = env
         self.stab = VelocityController(env.rate_ctrl)
-        if self.beacon_scale != 1.0:  # cel = prostopadłościan "target_box" (dawniej maszt): szerszy w x i y
-            env.model.geom_size[env.model.geom("target_box").id, :2] *= self.beacon_scale
+        set_beacon(env.model, self.beacon_scale, self.beacon_alpha, self.beacon_color)
         if self.calib == "world":
             render = self._world_render
         else:
@@ -207,15 +225,16 @@ class BancPilot:
         gx, gy, gz = (float(v) for v in obs["imu"][:3])
         cmd = self.ctrl.step(self.bridge.step_batch(left, right), ImuState(gyro=(gx, gy, -gz)))  # yaw + = w prawo
         if self.world is not None:  # BANC (normalizacja z kalibracji) + czujniki drona → komenda
-            from sim.world_decoder import drone_sensors
+            from sim.world_decoder import gps_yaw, sensors_from_obs, vision_weight
 
-            env = self.env
-            _, _, yaw = euler_zyx(env.data)
             x = self.ctrl.decoder.normalized(cmd.debug["motor_features"])
-            sens = drone_sensors(env.data.xpos[env.drone_id][2] - ground_z(env), env.data.qvel[0:3], yaw,
-                                 (gx, gy, gz))
+            sens = sensors_from_obs(obs)  # tylko odczyty czujników (sim/sensors.py), bez prawdziwego stanu
             cmd = self.world.decode(np.nan_to_num(x), sens)
-            cmd.debug = {"x": x, "sensors": sens}
+            yaw_banc = cmd.yaw
+            beacon = obs.get("beacon", np.zeros(2))
+            w_vis = vision_weight(float(beacon[1]), self.vision_range)
+            cmd.yaw = float(np.clip(w_vis * yaw_banc + (1 - w_vis) * gps_yaw(beacon), -1, 1))
+            cmd.debug = {"x": x, "sensors": sens, "yaw_banc": yaw_banc, "w_vis": w_vis}
         elif self.assist:
             cmd.roll = 0.0  # ze wspomaganiem roll z BANC nie idzie do drona
         self.cmd = cmd
@@ -269,7 +288,10 @@ class WorldRunner:
                     from sim.world_decoder import sample_weight
 
                     sens = cmd.debug["sensors"]
-                    sq.append(pilot.world.add(cmd.debug["x"], sens, target, sample_weight(bearing(env), sens)))
+                    # yaw z BANC uczymy tylko tam, gdzie cel jest w zasięgu wzroku (dalej kierunek daje GPS)
+                    near = float(env._distance() < pilot.vision_range)
+                    sq.append(pilot.world.add(cmd.debug["x"], sens, target, sample_weight(bearing(env), sens),
+                                              yaw_weight=near))
                 else:
                     losses.append(dec.fit_step(cmd.debug["motor_features"], target, apply=False))
                 if rng.random() < beta:
@@ -319,13 +341,14 @@ def main() -> None:
     ap.add_argument("decoder", type=Path)
     ap.add_argument("--seeds", type=int, nargs="+", default=[101, 102, 103, 104, 105, 106])
     ap.add_argument("--calib", choices=("drone", "world"), default="drone")
-    ap.add_argument("--beacon-scale", type=float, default=4.0)
+    ap.add_argument("--beacon-scale", type=float, default=1.0)
+    ap.add_argument("--beacon-alpha", type=float, default=None)
     ap.add_argument("--max-time", type=float, default=40.0)
     args = ap.parse_args()
 
     from sim.world_env import WorldEnv
 
-    pilot = BancPilot(args.decoder, calib=args.calib, beacon_scale=args.beacon_scale, brain=False)
+    pilot = BancPilot(args.decoder, calib=args.calib, beacon_scale=args.beacon_scale, brain=False, beacon_alpha=args.beacon_alpha)
     env = WorldEnv(control="acro" if pilot.assist else "angle", start_noise=False, max_time=args.max_time)
     env.reset(seed=0)
     pilot.bind(env)

@@ -34,6 +34,28 @@ def drone_sensors(height: float, vel_world, yaw: float, gyro) -> np.ndarray:
     return np.array([height - 1.0, vel_world[2], v_fwd, v_left, *gyro], dtype=float)
 
 
+def sensors_from_obs(obs) -> np.ndarray:
+    """Odczyty czujników drona z obserwacji ``WorldEnv`` (sim/sensors.py; w trybie ``real`` z szumem, dryfem
+    i opóźnieniem) → wektor ``SENSORS``: dalmierz (wysokość nad terenem; brak odczytu → 1 m, czyli bez korekty),
+    v_z z barometru, przepływ optyczny przód/bok, żyroskop. Bez prawdziwego stanu z symulatora."""
+    rng, flow_f, flow_l, _baro, vz = (float(v) for v in obs["sensors"])
+    height = rng if rng > 0 else 1.0
+    return np.array([height - 1.0, vz, flow_f, flow_l, *np.asarray(obs["imu"][:3], float)], dtype=float)
+
+
+def gps_yaw(beacon, k: float = 1.5) -> float:
+    """„GPS” celu (sim/sensors.py: kierunek względem nosa, + = w lewo) → yaw w konwencji BANC (+ = w prawo)."""
+    return float(np.clip(-k * float(beacon[0]), -1.0, 1.0))
+
+
+def vision_weight(gps_distance: float, vision_range: float, soft: float = 1.5) -> float:
+    """Udział BANC w yaw: ~1 bliżej celu niż ``vision_range`` (BANC go widzi), ~0 dalej (wtedy kierunek z GPS).
+    Płynne przejście o szerokości ``soft`` m. NASZE ZAŁOŻENIE (warstwa zachowań), nie wynik BANC."""
+    if not np.isfinite(vision_range) or gps_distance <= 0:  # bez GPS (np. scena bez celu) — tylko wzrok
+        return 1.0
+    return float(1.0 / (1.0 + np.exp((gps_distance - vision_range) / soft)))
+
+
 def sample_weight(bearing_rad: float, s: np.ndarray) -> float:
     """Waga próbki DAgger: większość klatek to „cel prawie na wprost, nic nie rób”, więc trudne stany
     dostają więcej: duży kąt do celu (> 20°), błąd wysokości > 0.3 m, szybki obrót (|gyro| > 1 rad/s,
@@ -75,14 +97,16 @@ class WorldDecoder:
         self.b_ctl = np.zeros((m, len(CTL_AXES)))
         self.n = 0
 
-    def add(self, x: np.ndarray, s: np.ndarray, target, weight: float = 1.0) -> np.ndarray:
+    def add(self, x: np.ndarray, s: np.ndarray, target, weight: float = 1.0, yaw_weight: float | None = None) -> np.ndarray:
         """Dopisuje parę (cechy, komenda nauczyciela) z wagą ``weight`` (trudne próbki > 1, patrz
-        ``sample_weight``). Zwraca kwadraty błędów [thrust, roll, pitch, yaw] obecnych wag (przed dopasowaniem)."""
+        ``sample_weight``). ``yaw_weight``: osobna waga dla wiersza yaw (np. 0, gdy cel jest za daleko, żeby
+        BANC go widział — wtedy kierunek daje GPS). Zwraca kwadraty błędów [thrust, roll, pitch, yaw] obecnych wag."""
         x = np.nan_to_num(x)
         z = np.r_[x, s]
         y_ctl = np.array([target.thrust, target.roll, target.pitch])
-        self.A_yaw += weight * np.outer(x, x)
-        self.b_yaw += weight * x * target.yaw
+        wy = weight if yaw_weight is None else weight * yaw_weight
+        self.A_yaw += wy * np.outer(x, x)
+        self.b_yaw += wy * x * target.yaw
         self.A_ctl += weight * np.outer(z, z)
         self.b_ctl += weight * np.outer(z, y_ctl)
         self.n += 1
