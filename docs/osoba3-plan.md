@@ -73,11 +73,24 @@ Sprawdzone: numpy 2.4.6, scipy 1.17.1, matplotlib 3.11.2, mujoco 3.14.0, model S
   obwiednia największego drzewa — inaczej MuJoCo (bvh_aabb liczone przy kompilacji) gubi kolizje.
   `outside_arena()`: dotyk ściany albo lot ponad 8 m = poza planszą — podgląd resetuje wtedy drona na start
   (ten sam świat).
+- `sim/episode.py`: `CrashDetector` — wywrotka = nieudana próba: > 1 s do góry nogami (przechył > 90°,
+  w powietrzu albo na ziemi) albo > 1.5 s na ziemi z przechyłem > 60° prawie bez ruchu. Krótki przewrót
+  w powietrzu nie kończy próby. Podgląd resetuje wtedy drona (ten sam świat); docelowo koniec epizodu w `DroneEnv`.
+- **Dron obrócony o 180° wokół z** względem Menagerie: w oryginalnym X2 nos z kamerą jest po stronie −x, a cały
+  projekt (Osoba 1, 2, regulator) przyjmuje +x = przód. Teraz nos jest w +x, W leci nosem do przodu.
+  `x2_with_eyes()` Osoby 1 (używane w `example_sim_client.py`, `check_mujoco_eyes.py`, `demo_figure.py`) dokleja
+  oczy do nieobróconego X2 z Menagerie: na siatce wypadają na ogonie, ale oczy nie widzą drona, a kierunek +x
+  jest ten sam, więc obraz do FlyVis różni się tylko o kilka cm położenia kamery — kalibracja się nie psuje.
+  Docelowo te skrypty i `DroneEnv` mają używać jednego modelu: `sim/assets` (oczy na soczewkach nosa).
+- Kamery-oczy `eye_left` / `eye_right` w `sim/assets/x2/x2.xml`: orientacja wg specyfikacji Osoby 1
+  (`visual_pipeline/drone_eyes.py`: 157°, ±70°, 512 × 450), pozycja na prawdziwych soczewkach kamery w gimbalu
+  na nosie (x = 0.158, y = −0.002 / −0.018, z = 0.065). Podgląd pokazuje je w lewym dolnym rogu sceny
+  (render `MujocoEyes` Osoby 1 — bez własnego drona w kadrze, jak FlyGym), 20 Hz (~23 ms na odświeżenie).
   `sim/target.py`: `Target.reached()` = dron nad polem niżej niż 1.5 m (pole robi się zielone),
   `distance()` do nagrody/metryk. Pozycja celu nie jest wejściem sterowania — dron ma go zobaczyć.
 - `python -m sim.viewer` — `Alt` włącza/wyłącza autostabilizację (start: wyłączona). Bez niej tryb acro
   (Windows, klawisze trzymane = prędkość kątowa):
-  `S`/`W` nos w dół/górę, `D`/`A` przechył w lewo/prawo, `Q`/`E` obrót, `Shift`/`Ctrl` ciąg ±30% od
+  `W`/`S` nos w dół/górę, `A`/`D` przechył w lewo/prawo, `Q`/`E` obrót, `Shift`/`Ctrl` ciąg ±30% od
   zawisu, `L` kamera przypięta/swobodna, kółko zoom, `Backspace` reset drona, `N` nowy losowy świat,
   `Spacja` pauza; `--seed` odtwarza świat (ziarno jest wypisywane w konsoli).
   Klawisze lotu przechwytuje hook Windows (`sim/keyboard.py`), żeby nie przełączały skrótów podglądu MuJoCo.
