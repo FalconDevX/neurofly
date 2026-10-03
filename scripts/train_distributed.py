@@ -12,6 +12,12 @@ samych scenach MuJoCo, leci epizody z uczeniem jak w ``train_decoder.py`` i odsy
 ΔM (4 × 6) i metryki; master dodaje ΔM do ``M`` (asynchronicznie, bez czekania na wolniejszego).
 Przez sieć nie idą klatki, więc łącze nie jest wąskim gardłem.
 
+``--world`` (master i workerzy): trening lotu do celu w świecie Osoby 3 (``scripts/train_world.py``):
+BANC steruje thrust/roll/pitch/yaw, epizod = losowy świat, ewaluacja = ``EVAL_WORLDS`` (ile razy cel).
+
+    python scripts/train_distributed.py master --world --episodes 200
+    python scripts/train_distributed.py worker --world --host 127.0.0.1     # i na slave: --host 192.168.50.1
+
 Kontrola przed treningiem: worker zaraz po starcie (po sprawdzeniu CUDA, przed wczytaniem BANC) wysyła
 ``ping``. Master czeka na ``--workers`` zgłoszeń przez ``--wait-join`` s, a potem na ich gotowość (``hello``
 po kalibracji) przez ``--wait-ready`` s. Gdy ktoś się nie zgłosi (np. slave nie odpowiada), master
@@ -42,6 +48,13 @@ sys.path.insert(0, str(ROOT / "scripts"))
 PORT = 5555
 
 
+def short_gpu(name: str) -> str:
+    """„NVIDIA GeForce RTX 4060 Laptop GPU” → „RTX 4060” (etykieta workera w logach)."""
+    for junk in ("NVIDIA ", "GeForce ", " Laptop GPU", " GPU"):
+        name = name.replace(junk, "")
+    return name.strip() or "?"
+
+
 def beta_schedule(episode: int, total: int, plan: str) -> float:
     """Jak ``train_decoder.beta_schedule`` (kopia: master nie importuje MuJoCo/torch)."""
     return max(0.0, 1.0 - episode / max(1, total // 2)) if plan == "B" else 0.0
@@ -64,9 +77,18 @@ class Master:
         self.before = self.after = None
         self.eval_pending = {"before": False, "after": False}
         self.history, self.workers = [], {}
+        self.init_from_worker = False
         self.pinged: dict[str, str] = {}  # nazwa → GPU, zgłoszenia przed wczytaniem BANC
         self.finished = False
         self.error: str | None = None  # powód przerwania
+
+    def label(self, name: str) -> str:
+        """Etykieta w logu: karta graficzna workera; przy dwóch takich samych kartach + nazwa komputera."""
+        gpu = self.pinged.get(name)
+        if not gpu:
+            return name
+        same = [n for n, g in self.pinged.items() if g == gpu]
+        return gpu if len(same) == 1 else f"{gpu} ({name})"
 
     @property
     def needed(self) -> int:
@@ -118,10 +140,11 @@ class Master:
 
     def handle(self, msg: dict) -> dict:
         name = msg.get("name", "?")
+        who = self.label(name)
         kind = msg["type"]
         if kind == "ping":
-            self.pinged[name] = msg.get("gpu", "?")
-            print(f"[{name}] zgłosił się ({msg.get('gpu', '?')}), {len(self.pinged)}/{self.needed}", flush=True)
+            self.pinged[name] = short_gpu(msg.get("gpu", "?"))
+            print(f"[{self.label(name)}] zgłosił się (komputer {name}), {len(self.pinged)}/{self.needed}", flush=True)
             if self.finished:
                 return self.task(name)
             return {"kind": "pong"}
@@ -134,26 +157,36 @@ class Master:
                 if self.M is None:
                     self.M = np.array(msg["M"])
                 self.M0 = self.M.copy()
-                print(f"[{name}] pierwszy worker, kalibracja: {calib}", flush=True)
+                print(f"[{who}] pierwszy worker, kalibracja: {calib}", flush=True)
             elif calib["yaw_axis_sign"] != self.ref["yaw_axis_sign"]:
-                print(f"[{name}] ODRZUCONY: yaw_axis_sign {calib['yaw_axis_sign']} ≠ {self.ref['yaw_axis_sign']}",
+                print(f"[{who}] ODRZUCONY: yaw_axis_sign {calib['yaw_axis_sign']} ≠ {self.ref['yaw_axis_sign']}",
                       flush=True)
                 return {"kind": "stop", "error": "inny znak osi yaw z kalibracji niż u pierwszego workera"}
             else:
-                print(f"[{name}] dołączył, kalibracja: {calib}", flush=True)
-            self.workers[name] = {"episodes": 0, "since": time.time()}
+                print(f"[{who}] dołączył, kalibracja: {calib}", flush=True)
+            if msg.get("init") and not self.init_from_worker and not self.args.init and not self.eval_pending["before"]:
+                # wagi startowe od workera, który ma plik --world-init (np. slave go nie ma: data/ poza gitem)
+                self.M, self.M0 = np.array(msg["M"]), np.array(msg["M"])
+                print(f"[{who}] wagi startowe z jego pliku", flush=True)
+            self.init_from_worker |= bool(msg.get("init"))
+            self.workers[name] = {"episodes": 0, "since": time.time(), "gpu": self.pinged.get(name, "?")}
         elif kind == "result" and msg["kind"] == "train":
             self.M += np.array(msg["dM"])
             self.done_episodes += len(msg["metrics"])
             self.workers.setdefault(name, {"episodes": 0})["episodes"] += len(msg["metrics"])
             for m in msg["metrics"]:
-                self.history.append({**m, "worker": name})
-                print(f"ep {m['index']:4d} [{name}]: cel {m['bearing']:+5.0f}° → {m['final_deg']:5.1f}°  "
+                self.history.append({**m, "worker": name, "gpu": self.pinged.get(name, "?")})
+                if "outcome" in m:  # --world
+                    print(f"ep {m['index']:4d} [{who}]: świat {m['world']} → {m['outcome']:<12s} najbliżej "
+                          f"{m['min_dist']:4.1f} m  beta {m['beta']:.2f}  loss {m['loss']:.4f}  "
+                          f"({self.done_episodes}/{self.args.episodes})", flush=True)
+                    continue
+                print(f"ep {m['index']:4d} [{who}]: cel {m['bearing']:+5.0f}° → {m['final_deg']:5.1f}°  "
                       f"beta {m['beta']:.2f}  loss {m['loss']:.4f}  ({self.done_episodes}/{self.args.episodes})",
                       flush=True)
         elif kind == "result" and msg["kind"] == "eval":
             setattr(self, msg["tag"], msg["eval"])
-            show(f"[{name}] {'przed treningiem' if msg['tag'] == 'before' else 'po treningu    '}", msg["eval"])
+            show(f"[{who}] {'przed treningiem' if msg['tag'] == 'before' else 'po treningu    '}", msg["eval"])
             if msg["tag"] == "after":
                 self.save()
                 self.finished = True
@@ -161,10 +194,12 @@ class Master:
 
     def save(self) -> None:
         a = self.args
-        out = a.out or ROOT / "data" / "decoders" / f"plan{a.plan}_distributed.npz"
+        name = "world_distributed.npz" if getattr(a, "world", False) else f"plan{a.plan}_distributed.npz"
+        out = a.out or ROOT / "data" / "decoders" / name
         out.parent.mkdir(parents=True, exist_ok=True)
         meta = {"plan": a.plan, "episodes": a.episodes, "workers": list(self.workers),
-                "before": self.before["mean_final_deg"], "after": self.after["mean_final_deg"]}
+                "before": self.before.get("reached", self.before["mean_final_deg"]),
+                "after": self.after.get("reached", self.after["mean_final_deg"])}
         np.savez(out, M=self.M, hover_thrust=self.ref["hover_thrust"], pitch_trim=self.ref["pitch_trim"],
                  meta=np.array(repr(meta)))
         out.with_suffix(".json").write_text(json.dumps(
@@ -210,9 +245,12 @@ def run_worker(args) -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     from sim.env import summarize
     from train_decoder import Runner, build, sweep_fit
+    from train_world import EVAL_WORLDS, TRAIN_SEED_OFFSET, setup
 
-    name = args.name or socket.gethostname()
+    host = args.name or socket.gethostname()  # identyfikator u mastera
     import torch
+
+    name = short_gpu(torch.cuda.get_device_name(0)) if torch.cuda.is_available() else f"CPU {host}"  # etykieta w logu
 
     if torch.cuda.is_available():
         print(f"[{name}] GPU: {torch.cuda.get_device_name(0)} (torch {torch.__version__})", flush=True)
@@ -222,8 +260,15 @@ def run_worker(args) -> None:
                  "albo uruchom z --cpu.")
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
 
+    try:  # literówka typu "127.0.0." — ZMQ czekałby po cichu
+        socket.getaddrinfo(args.host, args.port)
+        if args.host.count(".") == 3 and not all(p.isdigit() for p in args.host.split(".")):
+            raise OSError
+    except OSError:
+        sys.exit(f"[{name}] zły adres mastera --host {args.host!r} (np. 127.0.0.1 albo 192.168.50.1)")
+    print(f"[{name}] łączę z masterem {args.host}:{args.port}…", flush=True)
     sock = zmq.Context.instance().socket(zmq.REQ)
-    sock.setsockopt(zmq.RCVTIMEO, 60_000)
+    sock.setsockopt(zmq.RCVTIMEO, 15_000)  # zgłoszenie: master odpowiada od razu
     sock.setsockopt(zmq.LINGER, 0)
     sock.connect(f"tcp://{args.host}:{args.port}")
 
@@ -232,51 +277,69 @@ def run_worker(args) -> None:
         try:
             return json.loads(sock.recv())
         except zmq.Again:
-            sys.exit(f"[{name}] master {args.host}:{args.port} nie odpowiada od 60 s — przerywam")
+            sys.exit(f"[{name}] master {args.host}:{args.port} nie odpowiada — przerywam "
+                     "(sprawdź adres, czy master działa i zaporę na porcie)")
 
     # zgłoszenie przed wczytaniem BANC: master od razu wie, czy ten komputer jest osiągalny
-    reply = send({"type": "ping", "name": name, "gpu": gpu})
+    reply = send({"type": "ping", "name": host, "gpu": gpu})
     if reply["kind"] == "stop":
         sys.exit(f"[{name}] master przerwał: {reply.get('error', '')}")
     print(f"[{name}] połączony z masterem {args.host}:{args.port}, ładuję BANC…", flush=True)
+    sock.setsockopt(zmq.RCVTIMEO, 60_000)
 
     t0 = time.perf_counter()
-    env, bridge, ctrl, calib = build(args.plan, args.lr, args.noise, args.reward_lr, args.thrust,
-                                     args.readout, args.visual_gain)
-    dec = ctrl.decoder
-    if not args.no_sweep:  # master bierze wagi startowe od pierwszego workera (chyba że --init)
+    init = None
+    if args.world:  # lot do celu w WorldEnv (train_world.py); wagi startowe z --world-init
+        init = args.world_init if args.world_init and args.world_init.exists() else None
+        print(f"[{name}] wagi startowe: {init or 'brak pliku — od zera (master weźmie je od innego workera)'}",
+              flush=True)
+        env, pilot, runner, calib = setup(init, args.lr, args.beacon_scale, args.max_time)
+        ctrl, dec = pilot.ctrl, pilot.ctrl.decoder
+    else:
+        env, bridge, ctrl, calib = build(args.plan, args.lr, args.noise, args.reward_lr, args.thrust,
+                                         args.readout, args.visual_gain)
+        dec = ctrl.decoder
+    if not args.world and not args.no_sweep:  # master bierze wagi startowe od pierwszego workera (chyba że --init)
         fit = sweep_fit(env, bridge, ctrl)
         print(f"[{name}] start z regresji: korelacja yaw {fit['r']:+.2f}, trafność strony {fit['side_acc']:.0%}",
               flush=True)
     print(f"[{name}] gotowy po {time.perf_counter() - t0:.0f} s, kalibracja: "
           f"{ {k: v for k, v in calib.items() if k not in ('ok', 'scene')} }", flush=True)
-    runner = Runner(env, bridge, ctrl)
+    if not args.world:
+        runner = Runner(env, bridge, ctrl)
 
-    task = send({"type": "hello", "name": name, "M": dec.M.tolist(),
+    task = send({"type": "hello", "name": host, "M": dec.M.tolist(), "init": init is not None,
                  "calib": {"yaw_axis_sign": ctrl.yaw_axis_sign, "haltere_gain": ctrl.haltere_gain,
                            "hover_thrust": dec.hover_thrust, "pitch_trim": dec.pitch_trim}})
     while task["kind"] != "stop":
         if task["kind"] == "wait":
             time.sleep(task["seconds"])
-            task = send({"type": "poll", "name": name})
+            task = send({"type": "poll", "name": host})
             continue
         M = np.array(task["M"])
         dec.M = M.copy()
         if task["kind"] == "eval":
             print(f"[{name}] ewaluacja {task['tag']}…", flush=True)
-            task = send({"type": "result", "kind": "eval", "name": name, "tag": task["tag"],
-                         "eval": runner.evaluate(args.eval_duration)})
+            ev = runner.evaluate(EVAL_WORLDS) if args.world else runner.evaluate(args.eval_duration)
+            task = send({"type": "result", "kind": "eval", "name": host, "tag": task["tag"], "eval": ev})
             continue
         metrics = []
         for ep in task["episodes"]:
             t = time.perf_counter()
+            if args.world:
+                m = runner.episode(TRAIN_SEED_OFFSET + ep["seed"] % 1_000_000, learn=True, beta=ep["beta"],
+                                   rng=np.random.default_rng(ep["seed"]), start_noise=True)
+                metrics.append({**ep, **m})
+                print(f"[{name}] ep {ep['index']}: świat {m['world']} → {m['outcome']} najbliżej {m['min_dist']:.1f} m "
+                      f"({time.perf_counter() - t:.0f} s)", flush=True)
+                continue
             log, loss = runner.episode(ep["bearing"], args.duration, learn=args.plan, beta=ep["beta"],
                                        rng=np.random.default_rng(ep["seed"]))
             m = summarize(log, env.fps)
             metrics.append({**ep, "loss": loss, **m})
             print(f"[{name}] ep {ep['index']}: cel {ep['bearing']:+5.0f}° → {m['final_deg']:5.1f}° "
                   f"({time.perf_counter() - t:.0f} s)", flush=True)
-        task = send({"type": "result", "kind": "train", "name": name,
+        task = send({"type": "result", "kind": "train", "name": host,
                      "dM": (dec.M - M).tolist(), "metrics": metrics})
     print(f"[{name}] koniec{': ' + task['error'] if task.get('error') else ''}", flush=True)
     if task.get("error"):
@@ -285,6 +348,11 @@ def run_worker(args) -> None:
 
 # --- wspólne --------------------------------------------------------------------------------------
 def show(tag: str, ev: dict) -> None:
+    if "episodes" in ev:  # --world (jak sim.banc_pilot.show_world; master nie importuje MuJoCo)
+        per = "  ".join(f"{e['world']}:{'CEL' if e['reached'] else e['outcome'].split(':')[0]}({e['min_dist']:.0f}m)"
+                        for e in ev["episodes"])
+        print(f"{tag}: cel {ev['reached']}/{ev['n']}, średnio najbliżej {ev['mean_min_dist']:.1f} m  ({per})", flush=True)
+        return
     keys = [k for k in ev if k.startswith(("+", "-"))]
     per = "  ".join(f"{k}°→{ev[k]['final_deg']:.0f}°" for k in keys)
     print(f"{tag}: średni końcowy |kąt| {ev['mean_final_deg']:.1f}°, skręt w stronę celu "
@@ -303,6 +371,11 @@ def main() -> None:
     ap.add_argument("--max-bearing", type=float, default=90.0)
     ap.add_argument("--init", type=Path, help="wagi startowe (.npz); domyślnie z kalibracji pierwszego workera")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--world", action="store_true", help="lot do celu w świecie Osoby 3 (master i workerzy)")
+    ap.add_argument("--world-init", type=Path, default=ROOT / "data" / "decoders" / "planB_dn.npz",
+                    help="worker --world: wagi startowe (yaw)")
+    ap.add_argument("--beacon-scale", type=float, default=4.0, help="worker --world: grubość masztu celu")
+    ap.add_argument("--max-time", type=float, default=40.0, help="worker --world: s na epizod")
     ap.add_argument("--workers", type=int, default=2, help="ilu workerów musi się zgłosić (inaczej przerwanie)")
     ap.add_argument("--wait-join", type=float, default=120.0, help="s na zgłoszenie się wszystkich workerów")
     ap.add_argument("--wait-ready", type=float, default=900.0, help="s na wczytanie BANC i kalibrację u wszystkich")

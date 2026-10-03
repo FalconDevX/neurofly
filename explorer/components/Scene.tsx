@@ -230,7 +230,7 @@ export default function Scene({ data, view, api, onPick }: { data: Prepared; vie
       <LabelProjector data={data} scope={view.scope} refs={labelRefs} />
       <Rig data={data} view={view} api={api} onPick={onPick} />
       <GizmoHelper alignment="bottom-right" margin={[64, 64]}>
-        <GizmoViewport axisColors={["#ff5a5a", "#5aa0ff", "#3ddc84"]} labels={["L", "Y", "Z"]} labelColor="#0a0d1a" />
+        <GizmoViewport axisColors={["#fb7185", "#60a5fa", "#4ade80"]} labels={["L", "Y", "Z"]} labelColor="#09090b" />
       </GizmoHelper>
     </Canvas>
     <div className="labels" aria-hidden="true">

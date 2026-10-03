@@ -76,3 +76,28 @@ def test_master_waits_for_all_workers_and_aborts_without_slave(tmp_path):
     assert m.handle(_hello("B"))["kind"] == "eval"
     m.check_deadlines(1000.0)
     assert not m.finished
+
+
+def test_worker_labels_are_gpu_names(tmp_path):
+    from train_distributed import Master, short_gpu
+
+    assert short_gpu("NVIDIA GeForce RTX 3070 Ti Laptop GPU") == "RTX 3070 Ti"
+    m = Master(_args(tmp_path))
+    m.handle({"type": "ping", "name": "DESKTOP-A", "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU"})
+    m.handle({"type": "ping", "name": "DESKTOP-B", "gpu": "NVIDIA GeForce RTX 3070 Ti Laptop GPU"})
+    assert m.label("DESKTOP-A") == "RTX 4060" and m.label("DESKTOP-B") == "RTX 3070 Ti"
+    m.handle({"type": "ping", "name": "DESKTOP-C", "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU"})
+    assert m.label("DESKTOP-A") == "RTX 4060 (DESKTOP-A)"  # dwie takie same karty → + komputer
+
+
+def test_master_takes_initial_weights_from_worker_with_init_file(tmp_path):
+    from train_distributed import Master
+
+    a = _args(tmp_path)
+    a.workers = 2
+    m = Master(a)
+    m.handle({"type": "ping", "name": "slave"})
+    m.handle({"type": "ping", "name": "laptop"})
+    m.handle({**_hello("slave"), "M": np.zeros((4, 6)).tolist(), "init": False})  # pierwszy, ale bez pliku
+    m.handle({**_hello("laptop"), "init": True})
+    np.testing.assert_array_equal(m.M0, np.eye(4, 6))
