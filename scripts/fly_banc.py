@@ -110,6 +110,8 @@ def main() -> None:
     ap.add_argument("--video", type=Path, help="zapisz MP4 (widok zza drona + oczy)")
     ap.add_argument("--brain", action="store_true", help="w wideo panel z aktywnością BANC (tylko z --local)")
     ap.add_argument("--no-calib", action="store_true", help="zostaw kalibrację, którą ma serwer")
+    ap.add_argument("--lesion", nargs="+", choices=("visual", "haltere_aff", "dn_flight"),
+                    help="po kalibracji i wczytaniu dekodera usuń grupy neuronów (tylko z --local)")
     args = ap.parse_args()
 
     env = DroneEnv(mode=args.mode, use_roll=args.use_roll, max_yaw_rate=args.max_yaw_rate,
@@ -128,6 +130,14 @@ def main() -> None:
     if args.decoder:
         ctrl.decoder.load_weights(args.decoder)
         print(f"dekoder: {args.decoder}")
+    if args.lesion:
+        if ctrl is None:
+            ap.error("--lesion działa z --local")
+        from banc_control.controls import lesion
+        from banc_control.dynamics import RateDynamics
+
+        ctrl.dyn = RateDynamics(lesion(ctrl.c, args.lesion))  # kalibracja i dekoder zostają z całego BANC
+        print(f"lezja: {', '.join(args.lesion)}")
 
     out = ROOT / "data" / "runs" / time.strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
