@@ -1,7 +1,7 @@
 """WorldEnv — środowisko treningowe (Gymnasium) drona X2: lot do beacona na losowym świecie.
 
 (Inne niż sim/env.py: DroneEnv tam to pętla FlyVis + BANC na płaskiej scenie ze słupem; WorldEnv to
-pełny świat Osoby 3 — teren, bloki, cel z flagą, wiatr, wywrotka — z interfejsem Gymnasium.)
+pełny świat Osoby 3 — teren, bloki, cel, wiatr, wywrotka — z interfejsem Gymnasium.)
 
     from sim.world_env import WorldEnv
     env = WorldEnv()                      # scena beacon, tryb acro (Plan A), oczy włączone
@@ -21,9 +21,17 @@ Akcja = FlightCommand Osoby 2 (banc_control/contracts.py), 4 liczby:
 Obserwacja (tylko to, co ma muszka):
     eyes: (2, 512, 450, 3) uint8 — lewe i prawe oko (MujocoEyes Osoby 1), gdy eyes=True
     imu:  (6,) float32 — żyroskop [rad/s] i akcelerometr [m/s^2] w układzie drona (ImuState)
+    sensors: (5,) float32 — dalmierz w dół [m] (-1 = brak odczytu), przepływ optyczny przód/bok [m/s]
+          (0 bez dalmierza), barometr [m od startu], prędkość pionowa [m/s]
+    beacon: (2,) float32 — „GPS” celu: kierunek do celu względem nosa [rad, + = w lewo] i odległość w poziomie [m];
+          w trybie real przybliżony (błąd GPS ~2.5 m, kompas, 5 Hz) — wie mniej więcej dokąd, trasę wyznacza sam
+motor_tau [s]: opóźnienie silników (ciąg dochodzi do zadanego z tą stałą czasową); 0 = natychmiast (domyślnie),
+    sim.control.MOTOR_TAU = 0.04 = realistycznie
+    sensors="ideal" (domyślnie, zgodnie z dotychczasowym zachowaniem): prawdziwe wartości;
+    sensors="real": szum, dryf, opóźnienie 20 ms, zasięg dalmierza 0.05-4 m (sim/sensors.py) — pod Plan A
 Prawdziwy stan (pozycja, prędkość, cel, odległość) jest tylko w info — do nagrody, metryk i testów.
 
-Koniec epizodu (info["outcome"]): "cel" (dron nad polem lądowania), "wywrotka: ..." (sim/episode.py),
+Koniec epizodu (info["outcome"]): "cel" (dron dotknął celu — prostopadłościanu), "wywrotka: ..." (sim/episode.py),
 "poza planszą" (ściana albo > 8 m) — terminated; "limit czasu" — truncated.
 Nagroda: postęp w stronę celu [m] - koszt czasu, +/- premia/kara na końcu (stałe REWARD_*).
 """
@@ -38,6 +46,7 @@ from gymnasium import spaces
 from sim.control import RateCommand, RateController, euler_zyx
 from sim.episode import CrashDetector
 from sim.propellers import PropellerVisuals
+from sim.sensors import DroneSensors
 from sim.target import Target
 from sim.terrain import load_scene, outside_arena, randomize, upload_terrain
 from sim.wind import Wind
@@ -69,7 +78,7 @@ class WorldEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 30}
 
     def __init__(self, scene=BEACON_SCENE, control="acro", eyes=True, substeps=3, max_time=60.0,
-                 start_noise=True, wind=False, wind_speed=8.0, render_mode=None):
+                 start_noise=True, wind=False, wind_speed=8.0, sensors="ideal", motor_tau=0.0, render_mode=None):
         assert control in ("acro", "angle")
         self.model = load_scene(scene)
         self.data = mujoco.MjData(self.model)
@@ -82,20 +91,21 @@ class WorldEnv(gym.Env):
         self.wind_on = wind
         self.render_mode = render_mode
 
-        self.rate_ctrl = RateController(self.model)
+        self.rate_ctrl = RateController(self.model, motor_tau=motor_tau)  # >0: opóźnienie silników (Plan A: 0.04)
         self.crash = CrashDetector(self.model)
         self.target = Target.from_model(self.model)
         self.has_terrain = self.model.nhfield > 0
         self.drone_id = self.model.body("x2").id
         self.key_id = self.model.key("hover").id
-        self.gyro_adr = self.model.sensor_adr[self.model.sensor("body_gyro").id]
-        self.accel_adr = self.model.sensor_adr[self.model.sensor("body_linacc").id]
         self.eyes = MujocoEyes(self.model) if eyes else None
+        self.sensors = DroneSensors(self.model, mode=sensors)  # "real": szum, dryf, opóźnienie (sim/sensors.py)
         self._renderer = None
         self._props = None
 
         self.action_space = spaces.Box(np.array([0, -1, -1, -1], np.float32), np.ones(4, np.float32))
-        obs = {"imu": spaces.Box(-np.inf, np.inf, (6,), np.float32)}
+        obs = {"imu": spaces.Box(-np.inf, np.inf, (6,), np.float32),
+               "sensors": spaces.Box(-np.inf, np.inf, (5,), np.float32),
+               "beacon": spaces.Box(-np.inf, np.inf, (2,), np.float32)}
         if eyes:
             obs["eyes"] = spaces.Box(0, 255, (2, EYE_H, EYE_W, 3), np.uint8)
         self.observation_space = spaces.Dict(obs)
@@ -118,6 +128,8 @@ class WorldEnv(gym.Env):
         mujoco.mj_forward(self.model, self.data)
         self.rate_ctrl.reset()
         self.crash.reset()
+        self.sensors.reset(self.world_seed + 1, self.data,
+                           target=self.target.position(self.data) if self.target is not None else None)
         self.wind.reset(self.world_seed)
         self.wind.enabled = options.get("wind", self.wind_on)
         self.wind.step(self.model, 0.0)
@@ -130,6 +142,7 @@ class WorldEnv(gym.Env):
             self.wind.step(self.model, self.model.opt.timestep)
             self.rate_ctrl.apply(self._rate_command(cmd), self.model, self.data)
             mujoco.mj_step(self.model, self.data)
+            self.sensors.update(self.data)
 
         distance = self._distance()
         reward = REWARD_PROGRESS * (self.prev_distance - distance) + REWARD_TIME
@@ -192,13 +205,20 @@ class WorldEnv(gym.Env):
     # --- obserwacja i info ------------------------------------------------------------------------
 
     def imu(self):
-        """(gyro[3] rad/s, accel[3] m/s^2) w układzie drona — jak ImuState w banc_control."""
-        s = self.data.sensordata
-        return s[self.gyro_adr:self.gyro_adr + 3].copy(), s[self.accel_adr:self.accel_adr + 3].copy()
+        """(gyro[3] rad/s, accel[3] m/s^2) w układzie drona — jak ImuState w banc_control (z czujników)."""
+        reading = self.sensors.read()
+        return reading["gyro"].copy(), reading["accel"].copy()
 
     def _observation(self):
         gyro, accel = self.imu()
-        obs = {"imu": np.concatenate([gyro, accel]).astype(np.float32)}
+        reading = self.sensors.read()
+        dist = reading["range"]
+        valid = np.isfinite(dist)
+        flow = reading["flow"] if valid else np.zeros(2)
+        obs = {"imu": np.concatenate([gyro, accel]).astype(np.float32),
+               # [dalmierz (-1 = brak odczytu), przepływ przód, bok (0 bez dalmierza), barometr, v_z]
+               "sensors": np.array([dist if valid else -1.0, *flow, reading["baro"], reading["vz"]], np.float32),
+               "beacon": np.nan_to_num(reading["beacon"], nan=0.0).astype(np.float32)}  # bez celu: [0, 0]
         if self.eyes is not None:
             obs["eyes"] = np.stack(self.eyes.render(self.data))
         return obs

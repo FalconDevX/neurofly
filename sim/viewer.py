@@ -3,9 +3,9 @@
     python -m sim.viewer [--scene sim/assets/scene_beacon.xml] [--seed 1234]
 
 Domyślna scena: losowy teren 60 x 60 m (pagórki i zagłębienia) z blokami (styl blueprint), otoczony ścianami, i cel —
-pomarańczowe pole lądowania z masztem i flagą, 15–23 m od startu w losowym kierunku (sim/terrain.py).
+cienki pomarańczowy prostopadłościan (przenikalny), 15–23 m od startu w losowym kierunku (sim/terrain.py).
 Ziarno świata jest wypisywane w konsoli; --seed odtwarza ten sam świat.
-Gdy dron jest nad polem (niżej niż 1.5 m), pole robi się zielone. Gdy dotknie ściany albo
+Gdy dron go dotknie — SUKCES: cel robi się zielony, wynik w konsoli. Gdy dotknie ściany albo
 wzleci ponad nią (8 m) albo się wywróci (sim/episode.py: > 1 s do góry nogami albo > 1.5 s na boku
 na ziemi), wraca automatycznie na start w tym samym świecie — dla uczenia to nieudana próba.
 
@@ -27,6 +27,12 @@ Klawisze (w oknie podglądu, trzymane):
     Backspace    reset drona do startu (ten sam świat)
     N            nowy losowy świat (teren, bloki, cel) i reset drona
     Spacja       pauza / wznowienie
+    C            panel czujników: odczyty realistycznych czujników (szum, dryf, opóźnienie) obok prawdy, w tym
+                 „GPS” celu (kierunek i odległość do celu, przybliżone) + strzałki nad dronem:
+                 pomarańczowa = gdzie według GPS jest cel, zielona = gdzie jest naprawdę
+    T            ślad lotu wł. / wył. (linia za dronem, ~30 m trasy, starsze odcinki bledną)
+    M            panel metryk: odległość i postęp do celu, błąd kursu, wysokość, przechył, wyniki epizodów
+                 (z prawdziwego stanu; --metrics-csv zapisuje podsumowania epizodów)
     CapsLock     wiatr wł. / wył. (domyślnie 8 m/s w losowym kierunku, podmuchy ±3, --wind-speed; strzałka w prawym dolnym rogu
                  pokazuje, dokąd wieje względem widoku kamery — w górę = w głąb ekranu)
 
@@ -48,12 +54,15 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 
-from sim.control import RateController, VelocityController
+from sim.control import MOTOR_TAU, RateController, VelocityController
 from sim.episode import CrashDetector
+from sim.metrics import EpisodeMetrics, sensors_panel
 from sim.keyboard import FlightKeyboard
 from sim.propellers import PropellerVisuals
+from sim.sensors import DroneSensors
 from sim.target import Target
 from sim.terrain import load_scene, outside_arena, randomize, upload_terrain
+from sim.trail import Trail
 from sim.wind import Wind
 from visual_pipeline.drone_eyes import EYE_H, EYE_W, MujocoEyes
 
@@ -226,6 +235,47 @@ def wind_arrow(velocity, camera_azimuth):
     return img
 
 
+BEACON_ARROW_RGBA = np.array([1.0, 0.55, 0.1, 0.9], np.float32)   # gdzie według GPS jest cel
+TRUE_ARROW_RGBA = np.array([0.2, 0.9, 0.3, 0.6], np.float32)      # gdzie jest naprawdę
+
+
+def draw_beacon_arrows(scn, data, drone_id, sensors):
+    """Nad dronem: strzałka z odczytu „GPS” celu (pomarańczowa) i prawdziwy kierunek (cienka zielona)."""
+    reading, true = sensors.read(), sensors.latest
+    if reading is None or true is None or not np.all(np.isfinite(reading["beacon"])):
+        return
+    rot = data.xmat[drone_id].reshape(3, 3)
+    heading = np.arctan2(rot[1, 0], rot[0, 0])
+    start = data.xpos[drone_id] + np.array([0, 0, 0.35])
+    for beacon, rgba, width in ((reading["beacon"], BEACON_ARROW_RGBA, 0.025), (true["beacon"], TRUE_ARROW_RGBA, 0.012)):
+        if scn.ngeom >= scn.maxgeom:
+            return
+        angle = heading + beacon[0]
+        direction = np.array([np.cos(angle), np.sin(angle), 0.0])
+        z = direction
+        x = np.array([0.0, 0.0, 1.0])
+        y = np.cross(z, x)
+        mat = np.column_stack([x, y, z])  # oś z strzałki = kierunek do celu
+        mujoco.mjv_initGeom(scn.geoms[scn.ngeom], mujoco.mjtGeom.mjGEOM_ARROW,
+                            np.array([width, width, 0.8]), start, mat.ravel(), rgba)
+        scn.ngeom += 1
+
+
+def update_panels(viewer, show_sensors, show_metrics, sensors, metrics, metrics_pos):
+    """Panele tekstowe: C = czujniki (lewy górny róg sceny), M = metryki (prawy górny / środek)."""
+    texts = []
+    font = mujoco.mjtFontScale.mjFONTSCALE_100
+    if show_sensors and sensors.read() is not None:
+        texts.append((font, mujoco.mjtGridPos.mjGRID_TOPLEFT,
+                      *sensors_panel(sensors.read(), sensors.latest, sensors.mode)))
+    if show_metrics:
+        texts.append((font, metrics_pos, *metrics.panel()))
+    if texts:
+        viewer.set_texts(texts)
+    else:
+        viewer.clear_texts()
+
+
 def set_camera_lock(viewer, model, locked):
     """Przypięta: kamera za tyłem drona, obraca się z nim (follow_drone). Swobodna: sterowanie myszą jak zwykle."""
     if locked:
@@ -259,6 +309,9 @@ def main():
     parser.add_argument("--scene", type=Path, default=DEFAULT_SCENE)
     parser.add_argument("--seed", type=int, default=None, help="ziarno losowego świata (domyślnie losowe)")
     parser.add_argument("--wind-speed", type=float, default=8.0, help="średnia prędkość wiatru [m/s] (CapsLock)")
+    parser.add_argument("--metrics-csv", type=Path, default=None, help="zapis podsumowań epizodów (M) do CSV")
+    parser.add_argument("--motor-tau", type=float, default=MOTOR_TAU,
+                        help="opóźnienie silników [s] (domyślnie 0.04 = realistycznie, 0 = natychmiast)")
     parser.add_argument("--brain", action="store_true", help="panel z siecią BANC na żywo (.venv312)")
     parser.add_argument("--brain-decoder", type=Path, help="wagi dekodera do panelu (train_decoder.py)")
     args = parser.parse_args()
@@ -271,7 +324,7 @@ def main():
     model = load_scene(args.scene)
     data = mujoco.MjData(model)
     props = PropellerVisuals(model)
-    flight = RateController(model)
+    flight = RateController(model, motor_tau=args.motor_tau)
     stabilizer = VelocityController(flight)
     stabilized = False
     keyboard = FlightKeyboard()
@@ -280,6 +333,11 @@ def main():
     goal_reached = False
     key_id = model.key("hover").id
     crash = CrashDetector(model)
+    sensors = DroneSensors(model, mode="real")      # C: realistyczne czujniki (szum, dryf, opóźnienie)
+    metrics = EpisodeMetrics(model, csv_path=args.metrics_csv)  # M: metryki z prawdziwego stanu
+    show_sensors = show_metrics = False
+    metrics_pos = mujoco.mjtGridPos.mjGRID_TOP if brain is not None else mujoco.mjtGridPos.mjGRID_TOPRIGHT
+    trail = Trail()  # T: ślad lotu
     overlays = Overlays(model, brain)
     gyro_adr = model.sensor("body_gyro").adr[0]
     eyes_worker = EyesWorker(model)
@@ -291,7 +349,20 @@ def main():
         seed = new_world(model, data, args.seed)
         wind.reset(seed)
     resettables = (props, stabilizer, crash)
-    reset_to_start(model, data, key_id, *resettables)
+
+    def restart(outcome=None):
+        """Dron na start + nowy epizod metryk (outcome = wynik kończonego epizodu)."""
+        if outcome is not None:
+            summary = metrics.finish(outcome)
+            if summary is not None and args.metrics_csv:
+                print(f"   metryki zapisane: {args.metrics_csv}")
+        reset_to_start(model, data, key_id, *resettables)
+        trail.reset()
+        sensors.reset(None if seed is None else seed + metrics.episode + 1, data,
+                      target=goal.position(data) if goal is not None else None)
+        metrics.start(data, goal.position(data) if goal is not None else None, seed)
+
+    restart()
 
     # z panelem sieci chowamy prawy panel ustawień MuJoCo, żeby panel sieci stał przy prawej krawędzi okna
     with mujoco.viewer.launch_passive(model, data, key_callback=controls.on_key,
@@ -332,17 +403,24 @@ def main():
                       f"{np.degrees(np.arctan2(v[1], v[0])) % 360:.0f}° (0° = +x)" if wind.enabled else "wyłączony")
             camera_toggles = keyboard.take_camera_toggles()
             wheel = keyboard.take_wheel()
+            toggle_c, toggle_m = keyboard.take_panel_toggles()
+            show_sensors ^= bool(toggle_c % 2)
+            show_metrics ^= bool(toggle_m % 2)
+            if keyboard.take_trail_toggles() % 2:
+                trail.visible = not trail.visible
 
             with viewer.lock():
                 if regenerate:
+                    metrics.finish("nowy świat (N)")
                     with eyes_worker.render_lock:  # wątek oczu nie czyta modelu w trakcie zmiany świata
                         seed = new_world(model, data)
                     eyes_worker.upload_terrain()
                     wind.reset(seed)
                     goal_reached = False
                     goal.show_reached(model, False)
-                if reset or regenerate:
-                    reset_to_start(model, data, key_id, *resettables)
+                    restart()
+                elif reset:
+                    restart("przerwany (Backspace)")
                 if not paused:
                     wind.step(model, frame_dt)
                     target = data.time + frame_dt
@@ -352,19 +430,24 @@ def main():
                         else:
                             flight.apply(command, model, data)
                         mujoco.mj_step(model, data)
+                        sensors.update(data)
                     props.advance(data, frame_dt)
+                    trail.add(data.xpos[drone_id])
+                    metrics.update(data, goal.position(data) if goal is not None else None, wind.velocity)
                     if terrain_id is not None and outside_arena(model, data, drone_id):
                         print(f"dron poza planszą — reset na start (ten sam świat, ziarno {seed})")
-                        reset_to_start(model, data, key_id, *resettables)
+                        restart("poza planszą")
                     crashed = crash.update(data, frame_dt)
                     if crashed:
                         print(f"dron się wywrócił ({crashed}) — nieudana próba, reset na start (ziarno {seed})")
-                        reset_to_start(model, data, key_id, *resettables)
+                        restart(f"wywrotka: {crashed}")
                 if goal is not None and goal.reached(data, drone_id) != goal_reached:
                     goal_reached = not goal_reached
                     goal.show_reached(model, goal_reached)
                     if goal_reached:
-                        print(f"cel osiągnięty po {data.time:.1f} s")
+                        print(f"*** SUKCES! Dron dotknął celu po {metrics.current['time']:.1f} s ***")
+                        metrics.finish("cel")  # nowy epizod liczy się dalej od tego miejsca
+                        metrics.start(data, goal.position(data), seed)
                 if camera_toggles % 2:
                     camera_locked = not camera_locked
                     set_camera_lock(viewer, model, camera_locked)
@@ -375,10 +458,15 @@ def main():
                 viewer.opt.flags[:] = vis_flags
                 viewer.user_scn.flags[:] = render_flags
                 viewer.user_scn.ngeom = 0
+                trail.draw(viewer.user_scn)
                 props.draw(viewer.user_scn, data)
+                if show_sensors:
+                    draw_beacon_arrows(viewer.user_scn, data, drone_id, sensors)
             if brain is not None:  # konwencja DroneEnv.imu: yaw + = w prawo
                 gx, gy, gz = data.sensordata[gyro_adr:gyro_adr + 3]
                 brain.set_gyro((gx, gy, -gz))
+            if frame % 6 == 0 or toggle_c or toggle_m:  # panele C / M ~10 razy na sekundę
+                update_panels(viewer, show_sensors, show_metrics, sensors, metrics, metrics_pos)
             if frame % EYES_EVERY == 0:
                 eyes_worker.request(data)  # render, skalowanie i set_images w tle; tutaj tylko kopia stanu
             frame += 1

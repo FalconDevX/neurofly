@@ -42,10 +42,20 @@ def euler_zyx(data):
     return roll, pitch, yaw
 
 
-class RateController:
-    """PID prędkości kątowych + mixer: RateCommand -> siły silników (data.ctrl)."""
+MOTOR_TAU = 0.04  # s, typowa stała czasowa rozpędzania śmigła drona tej wielkości (do włączenia: motor_tau)
 
-    def __init__(self, model, body="x2", kp=(18.0, 18.0, 10.0), ki=(4.0, 4.0, 2.0), kd=(0.3, 0.3, 0.0)):
+
+class RateController:
+    """PID prędkości kątowych + mixer: RateCommand -> siły silników (data.ctrl).
+
+    motor_tau > 0: opóźnienie silników — siła każdego silnika dochodzi do zadanej z tą stałą czasową
+    (filtr pierwszego rzędu), jak prawdziwe śmigło, które musi się rozpędzić. 0 = natychmiast (domyślnie,
+    zgodność z dotychczasowym zachowaniem; realizm pod Plan A: MOTOR_TAU).
+    """
+
+    def __init__(self, model, body="x2", kp=(18.0, 18.0, 10.0), ki=(4.0, 4.0, 2.0), kd=(0.3, 0.3, 0.0),
+                 motor_tau=0.0):
+        self.motor_tau = motor_tau
         bid = model.body(body).id
         self.mass = model.body_subtreemass[bid]
         rot = np.zeros(9)
@@ -68,6 +78,7 @@ class RateController:
     def reset(self):
         self.integral = np.zeros(3)
         self.prev_error = np.zeros(3)
+        self.motor_force = None  # stan opóźnienia silników; startuje od bieżącego data.ctrl
 
     @property
     def hover_thrust(self):
@@ -92,7 +103,13 @@ class RateController:
         return np.clip(base + scale * yaw, self.ctrl_lo, self.ctrl_hi)
 
     def apply(self, cmd: RateCommand, model, data):
-        data.ctrl[:] = self.compute(cmd, data, model.opt.timestep)
+        forces = self.compute(cmd, data, model.opt.timestep)
+        if self.motor_tau > 0:
+            if self.motor_force is None:
+                self.motor_force = data.ctrl.copy()
+            self.motor_force += (1 - np.exp(-model.opt.timestep / self.motor_tau)) * (forces - self.motor_force)
+            forces = self.motor_force
+        data.ctrl[:] = forces
 
 
 class VelocityController:

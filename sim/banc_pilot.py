@@ -16,8 +16,8 @@ Dwa tryby (podział sterowania to NASZE ZAŁOŻENIE, nie wynik BANC):
     ``forward_speed`` trzyma ``VelocityController`` (prawdziwy stan). Dla dekoderów z ``train_decoder.py``.
 
 Kalibracja (jak w ``fly_banc.py``): ``calib="drone"`` — sceny ``DroneEnv``, ``calib="world"`` — te same ujęcia
-w bieżącym świecie. ``beacon_scale``: mnożnik średnicy masztu celu (zmiana w pamięci, scena na dysku bez zmian);
-maszt Osoby 3 ma 8 cm, z 15–23 m to ~0.25° — poniżej rozdzielczości oka muszki (~5°).
+w bieżącym świecie. ``beacon_scale``: mnożnik szerokości celu — prostopadłościanu (zmiana w pamięci, scena na dysku bez zmian);
+cel Osoby 3 ma 30 cm szerokości, z 15–23 m to ~1° — poniżej rozdzielczości oka muszki (~5°).
 
 Nauczyciel (``teacher``, tylko do treningu): z prawdziwego stanu — yaw ∝ kąt do celu, pitch do prędkości
 ``speed``·max(cos kąta, 0) (najpierw obrót, potem lot), thrust do wysokości ``height`` nad terenem.
@@ -160,9 +160,8 @@ class BancPilot:
             raise ValueError("pilot bez wspomagania wymaga WorldEnv(control='angle')")
         self.env = env
         self.stab = VelocityController(env.rate_ctrl)
-        if self.beacon_scale != 1.0:
-            for name in ("beacon_pole", "beacon_top"):
-                env.model.geom_size[env.model.geom(name).id, 0] *= self.beacon_scale
+        if self.beacon_scale != 1.0:  # cel = prostopadłościan "target_box" (dawniej maszt): szerszy w x i y
+            env.model.geom_size[env.model.geom("target_box").id, :2] *= self.beacon_scale
         if self.calib == "world":
             render = self._world_render
         else:

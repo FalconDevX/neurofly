@@ -1,20 +1,23 @@
-"""Cel lotu (pole lądowania z beaconem) ze sceny sim/assets/scene_beacon.xml.
+"""Cel lotu ze sceny sim/assets/scene_beacon.xml: cienki pomarańczowy prostopadłościan (geom "target_box").
 
-Pozycja celu służy tylko do nagrody i metryk — nie jest wejściem sterowania (dron ma go zobaczyć).
+Prostopadłościan jest przenikalny (bez kolizji). Sukces = zetknięcie: jakakolwiek część drona (zasięg łopat
+DRONE_REACH od środka) wchodzi w jego obrys. Wtedy robi się zielony (show_reached).
+Pozycja celu służy tylko do nagrody i metryk — nie jest wejściem sterowania (dron ma go zobaczyć,
+w przybliżeniu podpowiada mu „GPS” celu z sim/sensors.py).
 """
 
 import numpy as np
 
-REACHED_RGBA = np.array([0.1, 0.8, 0.2, 1.0], dtype=np.float32)
+REACHED_RGBA = np.array([0.1, 0.85, 0.25, 1.0], dtype=np.float32)
+DRONE_REACH = 0.3  # m, od środka drona do końca łopat (dotknięcie liczymy od krawędzi drona, nie środka)
 
 
 class Target:
-    def __init__(self, model, max_height=1.5):
+    def __init__(self, model):
+        self.model = model
         self.site_id = model.site("target").id
-        self.zone_id = model.geom("target_zone").id
-        self.half_size = model.geom_size[self.zone_id, :2].copy()
-        self.max_height = max_height  # nad polem liczy się tylko niski przelot / lądowanie
-        self.base_rgba = model.geom_rgba[self.zone_id].copy()
+        self.box_id = model.geom("target_box").id
+        self.base_rgba = model.geom_rgba[self.box_id].copy()
 
     @classmethod
     def from_model(cls, model):
@@ -25,15 +28,19 @@ class Target:
             return None
 
     def position(self, data):
+        """Środek podstawy prostopadłościanu (na ziemi)."""
         return data.site_xpos[self.site_id].copy()
 
     def distance(self, data, body_id):
         return float(np.linalg.norm(data.xpos[body_id] - self.position(data)))
 
     def reached(self, data, body_id):
-        offset = data.xpos[body_id] - self.position(data)
-        return bool(np.all(np.abs(offset[:2]) <= self.half_size) and offset[2] <= self.max_height)
+        """Czy dron dotyka prostopadłościanu (obrys poszerzony o DRONE_REACH; rozmiar czytany z modelu,
+        więc działa też po poszerzeniu celu w pamięci, np. beacon_scale w sim/banc_pilot.py)."""
+        half = self.model.geom_size[self.box_id]  # pół-wymiary: x, y, z
+        offset = data.xpos[body_id] - data.geom_xpos[self.box_id]
+        return bool(np.all(np.abs(offset) <= half + DRONE_REACH))
 
     def show_reached(self, model, reached):
-        """Pole zmienia kolor na zielony, gdy dron jest nad nim."""
-        model.geom_rgba[self.zone_id] = REACHED_RGBA if reached else self.base_rgba
+        """Prostopadłościan robi się zielony, gdy dron go dotknął."""
+        model.geom_rgba[self.box_id] = REACHED_RGBA if reached else self.base_rgba

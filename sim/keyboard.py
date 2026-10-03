@@ -22,9 +22,9 @@ VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL = 0xA0, 0xA1, 0xA2, 0xA3
 VK_LMENU, VK_RMENU = 0xA4, 0xA5
 VK_SHIFT, VK_CONTROL, VK_MENU = 0x10, 0x11, 0x12  # VK_MENU = Alt
 VK_CAPITAL = 0x14  # CapsLock — tylko obserwowany (nie przechwytujemy, lampka działa normalnie)
-VK_A, VK_D, VK_E, VK_L, VK_N, VK_Q, VK_S, VK_W = (ord(c) for c in "ADELNQSW")
+VK_A, VK_C, VK_D, VK_E, VK_L, VK_M, VK_N, VK_Q, VK_S, VK_T, VK_W = (ord(c) for c in "ACDELMNQSTW")
 # klawisze przechwytywane, gdy aktywne jest okno MuJoCo
-CAPTURED = {VK_W, VK_A, VK_S, VK_D, VK_Q, VK_E, VK_L, VK_N, VK_SHIFT, VK_CONTROL, VK_MENU}
+CAPTURED = {VK_W, VK_A, VK_S, VK_D, VK_Q, VK_E, VK_L, VK_N, VK_C, VK_M, VK_T, VK_SHIFT, VK_CONTROL, VK_MENU}
 ALIASES = {VK_LSHIFT: VK_SHIFT, VK_RSHIFT: VK_SHIFT, VK_LCONTROL: VK_CONTROL, VK_RCONTROL: VK_CONTROL,
            VK_LMENU: VK_MENU, VK_RMENU: VK_MENU}
 
@@ -59,6 +59,7 @@ class FlightKeyboard:
         self._lock_presses = 0
         self._stab_presses = 0
         self._world_presses = 0
+        self._panel_presses = {VK_C: 0, VK_M: 0, VK_T: 0}  # C = czujniki, M = metryki, T = ślad lotu
         self._caps_lock = False
         self._caps_down = False
         self._wheel = 0.0
@@ -102,6 +103,8 @@ class FlightKeyboard:
                             self._stab_presses += 1
                         if vk == VK_N and vk not in self._held:
                             self._world_presses += 1
+                        if vk in self._panel_presses and vk not in self._held:
+                            self._panel_presses[vk] += 1
                         self._held.add(vk)
                     else:
                         self._held.discard(vk)
@@ -186,6 +189,19 @@ class FlightKeyboard:
         """Stan CapsLocka (włączony = wiatr w podglądzie)."""
         with self._lock:
             return self._caps_lock
+
+    def take_panel_toggles(self):
+        """(ile razy C, ile razy M) od ostatniego odczytu — przełączniki paneli czujników i metryk."""
+        with self._lock:
+            c, m = self._panel_presses[VK_C], self._panel_presses[VK_M]
+            self._panel_presses[VK_C] = self._panel_presses[VK_M] = 0
+        return c, m
+
+    def take_trail_toggles(self):
+        """Ile razy naciśnięto T (ślad lotu wł./wył.) od ostatniego odczytu."""
+        with self._lock:
+            n, self._panel_presses[VK_T] = self._panel_presses[VK_T], 0
+        return n
 
     def take_new_world_requests(self):
         """Ile razy naciśnięto N od ostatniego odczytu."""
