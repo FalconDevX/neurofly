@@ -76,13 +76,17 @@ def main():
     args = parser.parse_args()
 
     policy = load_model(args.model) if args.model else None
-    env = WorldEnv(control=args.control, start_noise=args.start_noise, wind_speed=args.wind_speed)
+    banc = None
     if args.banc:
         from sim.banc_pilot import BancPilot
 
-        policy = BancPilot(args.banc, args.banc_forward, beacon_scale=args.beacon_scale)
+        banc = policy = BancPilot(args.banc, args.banc_forward, beacon_scale=args.beacon_scale)
+        if not banc.assist:
+            args.control = "angle"  # wagi z train_world.py: BANC daje przechył, symulator go utrzymuje
+    env = WorldEnv(control=args.control, start_noise=args.start_noise, wind_speed=args.wind_speed)
+    if banc:
         env.reset(seed=args.seed)
-        policy.bind(env)  # kalibracja zmienia stan env — dlatego reset poniżej
+        banc.bind(env)  # kalibracja zmienia stan env — dlatego reset poniżej
     keyboard = FlightKeyboard()
     stabilizer = VelocityController(env.rate_ctrl)
     stabilized = False
@@ -100,7 +104,14 @@ def main():
     overlays = Overlays(env.model, policy if hasattr(policy, "image") else None)  # panel BANC przy --banc
     print(__doc__)
     print(f"sterowanie: {'BANC ' + str(args.banc) if args.banc else 'model ' + args.model if policy else 'klawiatura (bez modelu dron sam nie leci)'}")
-    reset_policy = getattr(policy, "reset", None)  # BancPilot: stan sieci od nowa po każdym resecie świata
+    reset_policy = None
+    if banc:  # po każdym resecie: korytarz do celu bez drzew (jak w treningu), stan sieci od nowa
+        from sim.banc_pilot import clear_corridor
+
+        def reset_policy(o):
+            if clear_corridor(env):
+                o["eyes"] = np.stack(env.eyes.render(env.data))
+            banc.reset(o)
     if reset_policy:
         reset_policy(obs)
     print(f"świat {world}, cel {info['distance']:.1f} m od startu")
