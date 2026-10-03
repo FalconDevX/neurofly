@@ -331,6 +331,9 @@ def run_worker(args) -> None:
             task = send({"type": "poll", "name": host})
             continue
         M = np.array(task["M"])
+        if M.shape != dec.M.shape:  # też przy starym masterze bez kontroli trybu
+            sys.exit(f"[{name}] wagi od mastera {M.shape} ≠ moje {dec.M.shape}: inny tryb treningu — "
+                     f"uruchom workera {'bez' if args.world else 'z'} --world (tak jak master)")
         dec.M = M.copy()
         if task["kind"] == "eval":
             print(f"[{name}] ewaluacja {task['tag']}…", flush=True)
