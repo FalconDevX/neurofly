@@ -25,7 +25,7 @@ Grupy funkcjonalne biorę z oficjalnych kolumn `banc_888_meta.feather` (`banc_co
 | wing_steering | motor, `cell_function == wing_steering` (b1, b2, i1, iii1, …) | 12 / 12 |
 | wing_tension | motor, `cell_function == wing_tension` (tp, ps) | 6 / 6 |
 
-Graf po odrzuceniu glejów/tchawek: 175 401 neuronów, 1 613 322 krawędzi (count ≥ 5).
+Graf po odrzuceniu glejów/tchawek: 175 401 neuronów, 1 534 828 krawędzi (count ≥ 5, bez autapsów).
 
 **Nasze założenia (nie wynik BANC):** model szybkości odpalania, znaki NT (ACh +, GABA/Glu/histamina −,
 reszta +), wejście wzroku jako lewa/prawa strona `visual_projection`, kodowanie gyro → aferenty halter
@@ -37,7 +37,7 @@ L/R, przełożenie mięśni skrzydeł na thrust/roll/yaw.
 - Beacon z boku → roll i yaw w stronę beacona, stopniowane z kątem; thrust spada umiarkowanie (0.49 → ~0.36).
 - Haltery: przy znaku dobranym przez `calibrate_haltere_sign()` roll jest korygowany, ale jest silne
   sprzężenie na yaw (±1) i spadek thrust. Do strojenia / uczenia.
-- Czas: ~18 ms na podkrok na CPU (4 podkroki ≈ 70 ms na klatkę). Za wolno na pętlę 50 Hz → GPU (torch.sparse) lub podgraf.
+- Czas: GPU (torch CSR) 0.3 ms/podkrok, ~2.6 ms/klatkę; CPU ~24 ms/klatkę. Pętla 50 Hz mieści się z zapasem.
 
 ## Zakres
 
@@ -76,10 +76,10 @@ Analogia skrzydło → quadcopter (`banc_control/readout.py`):
 **0–4 h — moduły równolegle**
 - [x] Pobrać oficjalny BANC v888 (`scripts/download_banc.py`), `Connectome.from_banc()`.
 - [x] Grupy z oficjalnych adnotacji (tabela wyżej).
-- [x] Zmierzyć czas kroku: ~18 ms / podkrok.
+- [x] Zmierzyć czas kroku.
 - [x] Plan C: `calibrate_rest(visual=scena neutralna)`, `calibrate_scale()`, `calibrate_haltere_sign()`.
 - [ ] Ustalić z Osobą 1: mapowanie FlyVis → **root ID v888** (stare ID przez kolumny `root_626` / `root_850`).
-- [ ] Przyspieszyć krok (GPU / podgraf) do ≤ 5 ms.
+- [x] Przyspieszyć krok: GPU, 0.3 ms / podkrok.
 - [ ] Dostroić sprzężenie halter → yaw.
 
 **4–6 h — pełna pętla ze stubami**
