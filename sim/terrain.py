@@ -126,3 +126,15 @@ def outside_arena(model, data, body_id):
     half = model.hfield_size[model.hfield("terrain").id, 0]
     x, y, z = data.xpos[body_id]
     return max(abs(x), abs(y)) > half - DRONE_RADIUS or z > WALL_HEIGHT
+
+
+def upload_terrain(renderer, model):
+    """Wysyła nowy teren do GPU renderera offscreen (mujoco.Renderer).
+
+    MuJoCo kopiuje heightfield na kartę graficzną tylko przy tworzeniu renderera — bez tego po
+    randomize() kamery (np. oczy drona) widzą stary teren, choć fizyka używa nowego.
+    W passive viewerze to samo robi viewer.update_hfield().
+    """
+    if renderer._gl_context:
+        renderer._gl_context.make_current()
+    mujoco.mjr_uploadHField(model, renderer._mjr_context, model.hfield("terrain").id)

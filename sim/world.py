@@ -1,6 +1,7 @@
 """Scena dla pętli z BANC: X2 Osoby 3 (sim/assets/x2) + kamery-oczy Osoby 1 + przesuwalny cel.
 
-Oczy: ``visual_pipeline.drone_eyes.eye_camera_xml`` (konwencja FlyGym, 512×450, fovy 157°).
+Oczy: kamery eye_left / eye_right z ``x2.xml`` (na soczewkach gimbala, orientacja wg
+``visual_pipeline.drone_eyes``); gdyby model ich nie miał — ``eye_camera_xml`` (FlyGym, 512×450, fovy 157°).
 Cel: ciemny słup jak w ``scripts/example_sim_client.py`` (na nim robiona jest kalibracja), ale na
 ciele mocap, więc ``DroneEnv`` przestawia go w ``reset`` bez ponownej kompilacji modelu.
 Reszta świata (niebo, podłoże, światło) ze wspólnego ``common.xml`` Osoby 3, podłoga z ``scene_hover.xml``.
@@ -11,6 +12,7 @@ i są w ``.gitignore``.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from visual_pipeline.drone_eyes import EYE_H, EYE_W, eye_camera_xml
@@ -34,13 +36,16 @@ def _replace(text: str, old: str, new: str, where: str) -> str:
 def build_scene(extra_worldbody: str = "") -> Path:
     """Zapisuje scenę z oczami i celem, zwraca ścieżkę do ``scene_eyes.xml``."""
     x2 = (ASSETS / "x2" / "x2.xml").read_text(encoding="utf-8")
-    eyes = "\n      ".join(eye_camera_xml(e) for e in ("left", "right"))
-    x2 = _replace(x2, X2_BODY, f"{X2_BODY}\n      {eyes}", "x2/x2.xml")
+    if 'name="eye_left"' not in x2:  # x2.xml Osoby 3 ma już oczy na soczewkach nosa — nie dublujemy nazw
+        eyes = "\n      ".join(eye_camera_xml(e) for e in ("left", "right"))
+        x2 = _replace(x2, X2_BODY, f"{X2_BODY}\n      {eyes}", "x2/x2.xml")
     (ASSETS / "x2" / "x2_eyes.xml").write_text(x2, encoding="utf-8")
 
     common = (ASSETS / "common.xml").read_text(encoding="utf-8")
     common = _replace(common, 'file="x2/x2.xml"', 'file="x2/x2_eyes.xml"', "common.xml")
     # Domyślny bufor offscreen ma 640×480, a oko potrzebuje 512 px wysokości.
+    # (common.xml może już mieć offwidth/offheight — nadpisujemy zamiast dopisywać drugi raz)
+    common = re.sub(r'\s(offwidth|offheight)="[^"]*"', "", common)
     common = _replace(common, "<global ", f'<global offwidth="{max(EYE_W, 1280)}" offheight="{max(EYE_H, 720)}" ',
                       "common.xml")
     (ASSETS / "common_eyes.xml").write_text(common, encoding="utf-8")

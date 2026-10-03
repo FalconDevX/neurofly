@@ -4,7 +4,7 @@ Quadcopter odwrócony śmigłami w dół albo leżący na boku na ziemi nie ma j
 więc dla uczenia to porażka i reset. Krótki przewrót w powietrzu (manewr) nie kończy próby —
 stąd progi czasowe.
 
-Używane w podglądzie (sim/viewer.py), a docelowo w DroneEnv jako terminated z wynikiem porażki.
+Używane w podglądzie (sim/viewer.py), i w WorldEnv (sim/world_env.py) jako terminated z wynikiem porażki.
 """
 
 import numpy as np
