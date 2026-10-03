@@ -23,19 +23,12 @@ from visual_pipeline.fake_camera import FakeStereoCamera  # noqa: E402
 FPS = 30
 
 
-def main() -> None:
-    bridge = VisionBridge(fps=FPS)
+def rotation_check(bridge: VisionBridge, render) -> bool:
+    """``render(yaw)`` → (lewa, prawa) klatka dla kursu drona ``yaw`` (rad, + = w prawo)."""
     side_of = pd.read_csv(MAP_FILE).drop_duplicates("banc_888_id").set_index("banc_888_id").eye
     side = side_of.reindex(bridge.root_ids).to_numpy()
     kind = np.array([t[-1] if t[:2] in ("T4", "T5") and len(t) == 3 else "" for t in bridge.cell_types])
-
-    bars = [FakeStereoCamera(np.deg2rad(a)) for a in range(0, 360, 30)]
-
-    def render(yaw):
-        frames = [c.render(yaw) for c in bars]
-        return np.minimum.reduce([f[0] for f in frames]), np.minimum.reduce([f[1] for f in frames])
-
-    ok = True
+    a_minus_b = {}
     for rate_deg, turn in ((90, "w prawo"), (-90, "w lewo")):
         bridge.settle(*render(0.0))
         yaw, acc = 0.0, []
@@ -48,13 +41,29 @@ def main() -> None:
         for eye in ("right", "left"):
             a = act[(side == eye) & (kind == "a")].mean()
             b = act[(side == eye) & (kind == "b")].mean()
-            # skręt w prawo: prawe oko b (tył→przód), lewe a (przód→tył)
-            expected = "b" if (rate_deg > 0) == (eye == "right") else "a"
-            got = "b" if b > a else "a"
-            ok &= got == expected
-            print(f"skręt {turn}, oko {eye:5s}: T4/T5 a {a:.3f}  b {b:.3f} → przeważa {got} "
-                  f"(oczekiwane {expected}) {'OK' if got == expected else 'ŹLE'}", flush=True)
+            a_minus_b[turn, eye] = a - b
+            print(f"skręt {turn}, oko {eye:5s}: T4/T5 a {a:.3f}  b {b:.3f}", flush=True)
+    # Skręt w prawo: prawe oko widzi tył→przód (b), lewe przód→tył (a); w lewo odwrotnie.
+    # Porównujemy a−b między skrętami, co jest odporne na stałą różnicę poziomów a i b.
+    ok = True
+    for eye, sign in (("right", -1), ("left", 1)):
+        shift = a_minus_b["w prawo", eye] - a_minus_b["w lewo", eye]
+        good = np.sign(shift) == sign
+        ok &= good
+        print(f"oko {eye:5s}: (a−b) skręt w prawo − skręt w lewo = {shift:+.3f} "
+              f"(oczekiwany znak {'+' if sign > 0 else '−'}) {'OK' if good else 'ŹLE'}")
     print("WYNIK:", "orientacja ruchu zgodna z anatomią" if ok else "orientacja ruchu NIEZGODNA")
+    return bool(ok)
+
+
+def main() -> None:
+    bars = [FakeStereoCamera(np.deg2rad(a)) for a in range(0, 360, 30)]
+
+    def render(yaw):
+        frames = [c.render(yaw) for c in bars]
+        return np.minimum.reduce([f[0] for f in frames]), np.minimum.reduce([f[1] for f in frames])
+
+    rotation_check(VisionBridge(fps=FPS), render)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ dependencies = ["numpy", "scipy", "pandas"]
 dev = ["pytest"]
 # Osoba 1 (visual_pipeline): Python 3.12 (flyvis <3.13, flygym 2.1 >=3.12).
 # Torch z CUDA najlepiej wcześniej: pip install torch --index-url https://download.pytorch.org/whl/cu124
-vision = ["flyvis==1.2.0", "flygym==2.1.0", "torch", "pyarrow", "scikit-learn"]
+vision = ["flyvis==1.2.0", "flygym==2.1.0", "torch", "pyarrow", "scikit-learn", "pyzmq"]
 
 [tool.setuptools]
 packages = ["banc_control", "visual_pipeline"]

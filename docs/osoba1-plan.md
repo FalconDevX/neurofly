@@ -33,9 +33,9 @@ otwartego pliku HDF5, WinError 32), bez którego FlyVis nie startuje. Ładuje si
 | Parametr | Wartość |
 |---|---|
 | Kamery | 2 (stereo): `left`, `right` |
-| Format | `uint8`, `(512, 450, 3)` RGB (H×W), tyle oczekuje `flygym.vision.retina.Retina` |
+| Format | `uint8` RGB; inny rozmiar skalowany do `(512, 450, 3)` (H×W), potem zamiana na luminancję |
 | FPS | 30 (budżet ~33 ms na klatkę) |
-| Kąt widzenia | jak u muchy |
+| Kąt widzenia | jak u muchy; kamery MuJoCo wg specyfikacji z Etapu 5 + `VisionBridge(fisheye=True)` |
 
 ## Wyjście (co klatkę)
 
@@ -139,6 +139,57 @@ Do Osoby 2:
 - przy poprawnym wejściu ruchu odruch optomotoryczny ma zły znak: sprawdzić znaki NT / dynamikę na drodze płytka lobuli → DN → MN skrzydeł i kalibrację znaku yaw (np. na obrocie zamiast statycznego celu);
 - rozdzielić yaw_rate od roll_rate w halterach, zmniejszyć wzmocnienie yaw, skok na starcie po `dyn.reset()`.
 
+## Etap 5: przekazanie (MuJoCo Osoby 3, ZMQ, demo)
+
+![Potok Osoby 1 na renderze MuJoCo](img/osoba1_pipeline.png)
+
+`python scripts/demo_figure.py`: kamera MuJoCo → Retina → FlyVis T4a/T4b → aktywność neuronów BANC
+na pozycjach ich ciał, przy obrocie drona w prawo.
+
+### Kamery-oczy dla drona X2 (`visual_pipeline/drone_eyes.py`)
+
+Konwencja FlyGym (Retina jest pod nią skalibrowana):
+
+| Parametr | Wartość |
+|---|---|
+| Kamery | 2, na ciele `x2`, `pos` (0.12, ±0.03, 0.03) m |
+| Kierunek | 70° w lewo / w prawo od +x, poziomo; ~14° widzenia obuocznego z przodu |
+| Orientacja kadru | góra = +z drona; prawe oko: przód po lewej stronie kadru, lewe: po prawej |
+| `fovy` | 157° (jak `flygym vision.yaml`) |
+| Rozmiar | 512×450 (H×W); scena musi mieć `<global offheight="512">` |
+| Ciało drona | niewidoczne dla oczu (grupy geometrii 2 i 3), jak głowa muchy w FlyGym |
+| Korekcja | surowy kadr prostoliniowy; `correct_fisheye` robi serwer (`fisheye=True`) |
+
+`x2_with_eyes(menagerie_dir)` zapisuje `x2_eyes.xml` i `scene_eyes.xml` obok modelu z menagerie,
+`MujocoEyes(model).render(data)` zwraca (lewa, prawa) klatkę.
+
+Kontrola na renderze MuJoCo (`scripts/check_mujoco_eyes.py --preview eyes.png`): przy wymuszonym
+obrocie drona T4/T5 w BANC zmieniają się zgodnie z anatomią w obu oczach (a−b: −0,030 prawe, +0,032 lewe).
+
+### Most ZMQ (`visual_pipeline/zmq_protocol.py`, `scripts/vision_server.py`)
+
+```bash
+python scripts/vision_server.py                  # środowisko Osoby 1: wzrok + BancController
+python scripts/example_sim_client.py             # środowisko symulatora: mujoco + numpy + pyzmq
+```
+
+- Żądanie: `[nagłówek JSON, klatka lewa, klatka prawa]`, nagłówek `{"shape", "imu", "reset"}`.
+- Odpowiedź (tryb `command`): `{"thrust", "roll", "pitch", "yaw", "unmatched_ids", "timing_ms"}`.
+  Tryb `--mode activity` zwraca zamiast tego `root_ids` i `activity` (dla osobnego procesu Osoby 2).
+- IMU w konwencji `ImuState`: yaw + = w prawo, więc z MuJoCo `yaw = −ω_z`; roll + = prawe skrzydło w dół.
+- `VisionClient` wymaga tylko `numpy` i `pyzmq` (bez torch/FlyVis): Osoba 3 musi dodać `pyzmq` do `environment.yml`.
+
+Pomiar (RTX 3070 Ti, ten sam komputer): serwer ~23 ms na klatkę (przygotowanie klatek z korekcją
+„rybiego oka" ~11, FlyVis ~7, kontroler ~3), z przesyłem ~25 ms. Pierwsza klatka ~6 s (kompilacja numba).
+Luminancja liczona całkowitoliczbowo: 1,5 ms zamiast 5,7 ms na oko.
+
+**Kolor:** każde omatidium Retina czyta tylko kanał G albo B, więc w kolorowej scenie MuJoCo dawało
+fałszywy kontrast w szachownicę. Most zamienia klatki na luminancję przed Retina.
+
+**Ograniczenie:** tryb `command` kalibruje kontroler na syntetycznych scenach. Na scenie MuJoCo
+`thrust` stoi na 0, bo jasność sceny różni się od kalibracyjnej. Kalibrację trzeba zrobić na
+scenach z symulatora (cel na wprost / ±60°), np. przez dodatkowy typ żądania.
+
 ## Znane ograniczenia
 
 - Lewa strona: orientacja z symetrii i DRA, a nie z danych T4 lewej strony (które wskazują zwrot przeciwny). Przyczyna rozbieżności niezbadana; podejrzenie: adnotacje podtypów T4 po lewej.
@@ -147,6 +198,6 @@ Do Osoby 2:
 
 ## Do zrobienia
 
-1. Szkielety dla pozostałych typów: mniej cykliczności, większe pokrycie.
-2. Ustalić z Osobą 3, jak symulacja dostarcza klatki (ten sam proces czy osobna aplikacja).
+1. Kalibracja kontrolera na scenach z symulatora (z Osobą 2 i 3).
+2. Szkielety dla pozostałych typów: mniej cykliczności, większe pokrycie.
 3. Sprawdzić adnotacje T4 po lewej stronie BANC (rozbieżność 180°).
