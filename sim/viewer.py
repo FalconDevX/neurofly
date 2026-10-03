@@ -9,6 +9,10 @@ Gdy dron jest nad polem (niżej niż 1.5 m), pole robi się zielone. Gdy dotknie
 wzleci ponad nią (8 m) albo się wywróci (sim/episode.py: > 1 s do góry nogami albo > 1.5 s na boku
 na ziemi), wraca automatycznie na start w tym samym świecie — dla uczenia to nieudana próba.
 
+Z --brain (środowisko .venv312 z FlyVis i danymi BANC): po prawej panel z siecią BANC v888 na żywo —
+oczy drona → FlyVis → BANC, aktywność neuronów i grup lotu oraz komenda dekodera (sim/brain_panel.py).
+Sieć tylko obserwuje, sterujesz dalej klawiszami. --brain-decoder: wagi z train_decoder.py.
+
 Lewy dolny róg: obraz z kamer-oczu drona (lewe | prawe), dokładnie to, co dostaje wzrok Osoby 1
 (visual_pipeline/drone_eyes.py: 157°, bez własnego drona w kadrze), odświeżany 30 razy na sekundę w osobnym wątku.
 
@@ -158,8 +162,9 @@ class Overlays:
     viewer.set_images zastępuje wszystkie obrazy naraz, więc oba idą w jednym wywołaniu.
     """
 
-    def __init__(self, model):
+    def __init__(self, model, brain=None):
         self.model = model
+        self.brain = brain  # BrainPanel (--brain) albo None
         self.eyes = None  # MujocoEyes tworzony dopiero, gdy nie dostajemy gotowych klatek
         self.eyes_image = None
 
@@ -183,6 +188,15 @@ class Overlays:
                 gap = np.full((height, 4, 3), 255, np.uint8)  # biały pasek między okiem lewym i prawym
                 self.eyes_image = np.hstack([left, gap, right])
             images.append((mujoco.MjrRect(view.left, view.bottom, 2 * width + 4, height), self.eyes_image))
+        if self.brain is not None and self.brain.image is not None:
+            # panel sieci: prawy górny róg, ~1/3 szerokości, nad strzałką wiatru
+            img = self.brain.image
+            free_height = view.height - (WIND_SIZE + 8 if wind.enabled else 0)
+            w = int(min(view.width // 3, free_height * img.shape[1] / img.shape[0]))
+            h = round(w * img.shape[0] / img.shape[1])
+            if w >= 120:
+                images.append((mujoco.MjrRect(view.left + view.width - w, view.bottom + view.height - h, w, h),
+                               cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)))
         if wind.enabled and view.width >= WIND_SIZE and view.height >= WIND_SIZE:
             rect = mujoco.MjrRect(view.left + view.width - WIND_SIZE, view.bottom, WIND_SIZE, WIND_SIZE)
             images.append((rect, wind_arrow(wind.velocity, viewer.cam.azimuth)))
@@ -244,7 +258,14 @@ def main():
     parser.add_argument("--scene", type=Path, default=DEFAULT_SCENE)
     parser.add_argument("--seed", type=int, default=None, help="ziarno losowego świata (domyślnie losowe)")
     parser.add_argument("--wind-speed", type=float, default=8.0, help="średnia prędkość wiatru [m/s] (CapsLock)")
+    parser.add_argument("--brain", action="store_true", help="panel z siecią BANC na żywo (.venv312)")
+    parser.add_argument("--brain-decoder", type=Path, help="wagi dekodera do panelu (train_decoder.py)")
     args = parser.parse_args()
+    brain = None
+    if args.brain or args.brain_decoder:
+        from sim.brain_panel import BrainPanel
+
+        brain = BrainPanel(decoder_path=args.brain_decoder)
 
     model = load_scene(args.scene)
     data = mujoco.MjData(model)
@@ -258,7 +279,8 @@ def main():
     goal_reached = False
     key_id = model.key("hover").id
     crash = CrashDetector(model)
-    overlays = Overlays(model)
+    overlays = Overlays(model, brain)
+    gyro_adr = model.sensor("body_gyro").adr[0]
     eyes_worker = EyesWorker(model)
     wind = Wind(mean_speed=args.wind_speed, gust_speed=0.375 * args.wind_speed)  # 8 m/s -> podmuchy ±3
     controls = Controls()
@@ -275,7 +297,12 @@ def main():
         set_camera_lock(viewer, model, camera_locked)
         viewer.cam.distance = CHASE_DISTANCE
         follow_drone(viewer, data, drone_id, snap=True)
-        eyes_worker.on_frames = lambda frames: overlays.update(viewer, None, wind, refresh_eyes=True, frames=frames)
+        def on_frames(frames):
+            if brain is not None:
+                brain.submit(frames)
+            overlays.update(viewer, None, wind, refresh_eyes=True, frames=frames)
+
+        eyes_worker.on_frames = on_frames
         vis_flags = viewer.opt.flags.copy()
         render_flags = viewer.user_scn.flags.copy()
         print(__doc__)
@@ -346,6 +373,9 @@ def main():
                 viewer.user_scn.flags[:] = render_flags
                 viewer.user_scn.ngeom = 0
                 props.draw(viewer.user_scn, data)
+            if brain is not None:  # konwencja DroneEnv.imu: yaw + = w prawo
+                gx, gy, gz = data.sensordata[gyro_adr:gyro_adr + 3]
+                brain.set_gyro((gx, gy, -gz))
             if frame % EYES_EVERY == 0:
                 eyes_worker.request(data)  # render, skalowanie i set_images w tle; tutaj tylko kopia stanu
             frame += 1
@@ -354,6 +384,8 @@ def main():
             viewer.sync()
             time.sleep(max(0.0, 1 / 60 - (time.perf_counter() - now)))
     eyes_worker.close()
+    if brain is not None:
+        brain.close()
     keyboard.close()
 
 
