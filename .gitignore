@@ -5,3 +5,4 @@ data/
 neurofly/
 third_party/
 *.mp4
+.venv*/
