@@ -290,8 +290,16 @@ class WorldRunner:
                 "bearing": float(b0), "final_deg": float(abs(np.rad2deg(bearing(env)))),
                 "mean_height": float(np.mean(heights)), "loss": float(np.mean(losses)) if losses else float("nan")}
 
-    def evaluate(self, seeds) -> dict:
-        eps = [self.episode(s) for s in seeds]
+    def evaluate(self, seeds, log=None) -> dict:
+        """``log``: np. ``print`` — linia po każdym świecie (ewaluacja trwa kilka minut)."""
+        eps = []
+        for i, s in enumerate(seeds):
+            t = time.perf_counter()
+            eps.append(self.episode(s))
+            if log:
+                e = eps[-1]
+                log(f"  ewaluacja {i + 1}/{len(seeds)}: świat {s} → {e['outcome']}, najbliżej {e['min_dist']:.1f} m "
+                    f"({time.perf_counter() - t:.0f} s)")
         return {"episodes": eps, "reached": int(sum(e["reached"] for e in eps)), "n": len(eps),
                 "mean_min_dist": float(np.mean([e["min_dist"] for e in eps])),
                 "mean_final_deg": float(np.mean([e["final_deg"] for e in eps]))}

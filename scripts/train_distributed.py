@@ -368,7 +368,8 @@ def run_worker(args) -> None:
             dec.M = M.copy()
         if task["kind"] == "eval":
             print(f"[{name}] ewaluacja {task['tag']}…", flush=True)
-            ev = runner.evaluate(EVAL_WORLDS) if args.world else runner.evaluate(args.eval_duration)
+            ev = (runner.evaluate(EVAL_WORLDS, log=lambda m: print(f"[{name}]{m}", flush=True)) if args.world
+                  else runner.evaluate(args.eval_duration))
             task = send({"type": "result", "kind": "eval", "name": host, "tag": task["tag"], "eval": ev})
             continue
         metrics = []
