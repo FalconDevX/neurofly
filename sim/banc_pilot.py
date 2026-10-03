@@ -34,15 +34,9 @@ import mujoco
 import numpy as np
 
 from sim.control import VelocityController, euler_zyx
-from sim.world_env import MAX_RATE, MAX_TILT
+from sim.world_env import MAX_TILT, to_action
 
 GRAVITY = 9.81
-
-
-def to_action(cmd, hover_thrust):
-    """RateCommand → akcja WorldEnv (jak ``sim.run_env.to_action``)."""
-    rates = np.array([cmd.roll_rate, cmd.pitch_rate, cmd.yaw_rate]) / MAX_RATE
-    return np.concatenate([[cmd.thrust / (2 * hover_thrust)], np.clip(rates, -1, 1)])
 
 
 def ground_z(env) -> float:

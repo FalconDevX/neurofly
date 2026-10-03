@@ -175,4 +175,9 @@ Dane: `npm run dev` / `build` uruchamia `scripts/sync-data.mjs`, który kopiuje 
 - `docs/prezentacja/` (NeuroFly.pptx + build.js) powstało w innej sesji; nie było weryfikowane względem wyników z v888.
 
 - `neurofly/` w katalogu głównym to pusty, zagnieżdżony klon tego samego remote — nie commitować, do usunięcia przez właściciela.
-- Uruchamianie: `pip install -e .[dev]`, `python scripts/download_banc.py`, `pytest`.
+- Uruchamianie: torch z CUDA, potem `pip install -e .[all]` (extras: `vision`, `sim`, `dev`), `python scripts/download_banc.py`, `flyvis download-pretrained`, `pytest`.
+- `python scripts/doctor.py [--master IP]` sprawdza instalację (Python 3.12, pakiety, torch z CUDA, wagi FlyVis,
+  dane BANC, dekodery, łącze z masterem) i podaje polecenia naprawy. Master odpowiada na `probe` bez liczenia workera.
+- Lot do celu w świecie Osoby 3: `sim/banc_pilot.py` (BANC → thrust/roll/pitch/yaw, `WorldEnv` angle), trening
+  `scripts/train_world.py` / `train_distributed.py --world` (master i workerzy muszą mieć ten sam tryb — inaczej
+  master odrzuca), okno `python -m sim.run_env --banc <wagi>`. Założenia: czysty korytarz bez drzew, maszt ×4.

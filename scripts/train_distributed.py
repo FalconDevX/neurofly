@@ -142,6 +142,8 @@ class Master:
         name = msg.get("name", "?")
         who = self.label(name)
         kind = msg["type"]
+        if kind == "probe":  # scripts/doctor.py --master: test łącza, nie worker
+            return {"kind": "pong", "workers": len(self.pinged), "needed": self.needed}
         if kind == "ping":
             mine, theirs = bool(getattr(self.args, "world", False)), bool(msg.get("world", False))
             if mine != theirs:  # np. master --world, a worker bez: macierze wag mają inny rozmiar

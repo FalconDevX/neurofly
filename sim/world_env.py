@@ -59,6 +59,12 @@ START_VEL = 0.3             # m/s
 START_SPIN = 0.3            # rad/s
 
 
+def to_action(cmd, hover_thrust):
+    """RateCommand (sim/control.py) -> akcja WorldEnv [thrust 0..1, roll, pitch, yaw -1..1] w trybie acro."""
+    rates = np.array([cmd.roll_rate, cmd.pitch_rate, cmd.yaw_rate]) / MAX_RATE
+    return np.concatenate([[cmd.thrust / (2 * hover_thrust)], np.clip(rates, -1, 1)])
+
+
 class WorldEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 30}
 

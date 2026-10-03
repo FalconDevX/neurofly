@@ -10,12 +10,17 @@ dev = ["pytest"]
 # Osoba 1 (visual_pipeline): Python 3.12 (flyvis <3.13, flygym 2.1 >=3.12).
 # Torch z CUDA najlepiej wcześniej: pip install torch --index-url https://download.pytorch.org/whl/cu124
 vision = ["flyvis==1.2.0", "flygym==2.1.0", "torch", "pyarrow", "scikit-learn", "pyzmq"]
+# Osoba 3 (sim/): MuJoCo, WorldEnv (gymnasium), podgląd i panel BANC (cv2), wideo (imageio + ffmpeg).
+sim = ["mujoco", "gymnasium", "opencv-python-headless", "imageio", "imageio-ffmpeg", "pyzmq"]
+# Wszystko do treningu na GPU (pętla wzrok → BANC → dron): pip install -e .[all] (torch z CUDA wcześniej)
+all = ["neurofly[vision,sim,dev]"]
 
 [tool.setuptools]
-packages = ["banc_control", "visual_pipeline"]
+packages = ["banc_control", "visual_pipeline", "sim"]
 
 [tool.setuptools.package-data]
 visual_pipeline = ["flyvis_banc_map.csv"]
+sim = ["assets/**/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

@@ -34,16 +34,10 @@ import mujoco.viewer
 import numpy as np
 
 from sim.control import VelocityController
-from sim.world_env import MAX_RATE, WorldEnv
+from sim.world_env import WorldEnv, to_action
 from sim.keyboard import FlightKeyboard
 from sim.propellers import PropellerVisuals
 from sim.viewer import CHASE_DISTANCE, KEY_BACKSPACE, ZOOM_STEP, Overlays, follow_drone, set_camera_lock
-
-
-def to_action(cmd, hover_thrust):
-    """RateCommand -> akcja WorldEnv [thrust 0..1, roll, pitch, yaw -1..1]."""
-    rates = np.array([cmd.roll_rate, cmd.pitch_rate, cmd.yaw_rate]) / MAX_RATE
-    return np.concatenate([[cmd.thrust / (2 * hover_thrust)], np.clip(rates, -1, 1)])
 
 
 def keyboard_action(keyboard, env, stabilizer, stabilized):
@@ -109,10 +103,12 @@ def main():
     if banc:  # po każdym resecie: korytarz do celu bez drzew (jak w treningu), stan sieci od nowa
         from sim.banc_pilot import clear_corridor
 
-        def reset_policy(o):
+        def banc_reset(o):
             if clear_corridor(env):
                 o["eyes"] = np.stack(env.eyes.render(env.data))
             banc.reset(o)
+
+        reset_policy = banc_reset
     if reset_policy:
         reset_policy(obs)
     print(f"świat {world}, cel {info['distance']:.1f} m od startu")

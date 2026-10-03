@@ -26,13 +26,10 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 EVAL_WORLDS = (101, 102, 103, 104, 105, 106)
 TRAIN_SEED_OFFSET = 1000  # światy treningowe ≠ ewaluacyjne
-
-
-def beta_schedule(episode: int, total: int) -> float:
-    return max(0.0, 1.0 - episode / max(1, total // 2))
 
 
 def setup(init: Path | None, lr: float = 0.5, beacon_scale: float = 4.0, max_time: float = 40.0):
@@ -53,6 +50,7 @@ def setup(init: Path | None, lr: float = 0.5, beacon_scale: float = 4.0, max_tim
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     from sim.banc_pilot import show_world
+    from train_decoder import beta_schedule
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--episodes", type=int, default=120)
@@ -75,7 +73,7 @@ def main() -> None:
     history = []
     for ep in range(args.episodes):
         t = time.perf_counter()
-        beta = beta_schedule(ep, args.episodes)
+        beta = beta_schedule(ep, args.episodes, "B")
         world = TRAIN_SEED_OFFSET + int(rng.integers(1_000_000))
         m = runner.episode(world, learn=True, beta=beta, rng=rng, start_noise=True)
         history.append({"episode": ep, "beta": beta, **m})
