@@ -199,23 +199,10 @@ Luminancja liczona całkowitoliczbowo: 1,5 ms zamiast 5,7 ms na oko.
 **Kolor:** każde omatidium Retina czyta tylko kanał G albo B, więc w kolorowej scenie MuJoCo dawało
 fałszywy kontrast w szachownicę. Most zamienia klatki na luminancję przed Retina.
 
-**Kalibracja na scenach z symulatora** (`VisionClient.calibrate`, żądanie `calibrate`):
-symulator renderuje 3 statyczne sceny stereo w zawisie, z celem na wprost, 60° w lewo i 60° w
-prawo (`CALIBRATION_BEARING_DEG`), i wysyła je w jednej wiadomości. Serwer ustala na nich
-odpowiedź FlyVis i robi `calibrate_rest` / `calibrate_scale` / `calibrate_haltere_sign`
-kontrolera Osoby 2. Na starcie serwer kalibruje się na scenach syntetycznych (awaryjnie);
-pole `calibration` w odpowiedzi mówi, która kalibracja obowiązuje (`synthetic` / `sim`).
-
-Wynik w MuJoCo (`scripts/example_sim_client.py`, cel 30° w prawo, obrót 30°/s):
-
-| | kalibracja syntetyczna | kalibracja z symulatora (2,2 s) |
-|---|---|---|
-| `thrust`, cel na wprost | 0,11 | **0,50** (zawis) |
-| `thrust`, pozostałe klatki | 0,00 | 0,18–0,43 |
-| `roll` | −0,13…+0,78 | −0,04…+0,15 |
-
-`yaw` = +1 przy obrocie w prawo w obu wariantach: to znany zły znak odruchu optomotorycznego
-po stronie kontrolera (Etap 4), nie wejście wzrokowe.
+**Kalibracja na scenach z symulatora** (Osoba 2, `visual_pipeline/server.py`): nagłówek `calib`
+(`neutral` / `left` / `right` / `turn_left` / `turn_right` / `finish`), po stronie symulatora
+wystarczy `VisionClient.calibrate(render)` (patrz `example_sim_client.py`). Kalibracja syntetyczna
+dawała w MuJoCo `thrust` = 0, bo jasność sceny różni się od kalibracyjnej.
 
 ## Znane ograniczenia
 
@@ -226,5 +213,4 @@ po stronie kontrolera (Etap 4), nie wejście wzrokowe.
 
 ## Do zrobienia
 
-1. Osoba 3: kalibracja na scenach z symulatora przez `VisionClient.calibrate` po starcie serwera.
-2. Osoba 2: znak odruchu optomotorycznego i sprzężenie halter → yaw (Etap 4).
+1. Osoba 3: `DroneEnv` z oczami `drone_eyes.py` i `VisionClient.calibrate(render)` po starcie serwera.

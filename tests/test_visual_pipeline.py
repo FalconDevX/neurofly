@@ -59,20 +59,6 @@ def test_zmq_request_roundtrip():
     assert imu2 == imu and reset
 
 
-def test_zmq_calibration_roundtrip_keeps_scene_order():
-    from visual_pipeline.zmq_protocol import CALIBRATION_SCENES, decode_message, encode_calibration
-
-    scenes = {name: (np.full((8, 6, 3), 10 * i, np.uint8), np.full((8, 6, 3), 10 * i + 1, np.uint8))
-              for i, name in enumerate(reversed(CALIBRATION_SCENES))}
-    header, frames = decode_message(encode_calibration(scenes))
-    assert header["calibrate"] == list(CALIBRATION_SCENES)
-    for i, name in enumerate(header["calibrate"]):
-        assert np.array_equal(frames[2 * i], scenes[name][0])
-        assert np.array_equal(frames[2 * i + 1], scenes[name][1])
-    with pytest.raises(ValueError):
-        encode_calibration({"rest": scenes["rest"]})
-
-
 def test_to_luminance_is_grey_and_close_to_bt601():
     from visual_pipeline.frames import to_luminance
 
@@ -121,3 +107,54 @@ def test_bridge_emits_contract_records():
     assert len(records) == len(bridge.root_ids) > 0
     assert len({r.banc_root_id for r in records}) == len(records)
     assert np.isfinite([r.activity for r in records]).all()
+
+
+class _FakeBridge:
+    """Interfejs VisionBridge bez FlyVis: aktywność = średnia jasność lewej/prawej połowy kadru."""
+
+    def __init__(self, connectome):
+        self.left = connectome.root_ids[connectome.group_indices("visual_L")]
+        self.right = connectome.root_ids[connectome.group_indices("visual_R")]
+        self.root_ids = np.concatenate([self.left, self.right]).astype(np.int64)
+        self.last_timings = {}
+
+    def reset(self):
+        pass
+
+    def step_batch(self, left, right):
+        from banc_control import VisualBatch
+
+        act = [1.0 - left.mean() / 255] * len(self.left) + [1.0 - right.mean() / 255] * len(self.right)
+        return VisualBatch(self.root_ids, np.array(act))
+
+    settle = step_batch
+
+
+def test_server_calibrates_on_simulator_scenes():
+    from banc_control import BancController, Connectome
+    from tests.test_banc_control import mini_banc
+    from visual_pipeline.server import ControlServer
+    from visual_pipeline.zmq_protocol import decode, encode_request
+
+    c = Connectome.from_banc_tables(*mini_banc())
+    server = ControlServer(_FakeBridge(c), BancController(c))
+
+    def render(bearing):  # ciemny cel po stronie bearing
+        l, r = np.full((8, 8, 3), 200, np.uint8), np.full((8, 8, 3), 200, np.uint8)
+        (r if bearing > 0 else l)[:] -= np.uint8(min(abs(bearing) * 150, 150))
+        return l, r
+
+    def send(*args, **kw):
+        return server.handle(*decode(encode_request(*args, **kw)))[0]
+
+    assert "error" in send(None, None, calib="finish")
+    for scene, b in (("neutral", 0.0), ("left", -1.0), ("right", 1.0)):
+        assert send(*render(b), calib=scene)["ok"]
+    for k in range(10):
+        send(*render(-0.1 * k), calib="turn_right")
+        send(*render(0.1 * k), calib="turn_left")
+    out = send(None, None, calib="finish")
+    assert out["ok"] and out["optomotor_yaw_diff"] <= 0
+    for _ in range(30):  # po resecie dynamika potrzebuje kilku klatek do stanu spoczynku
+        reply = send(*render(0.0), imu={"gyro": [0.0, 0.0, 0.0], "accel": [0.0, 0.0, -9.81]})
+    assert abs(reply["thrust"] - 0.5) < 0.05 and reply["unmatched_ids"] == 0

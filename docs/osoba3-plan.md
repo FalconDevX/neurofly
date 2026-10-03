@@ -36,6 +36,21 @@ binarki pod numpy 1.x, a `mujoco` wymaga numpy 2.x.
 Sprawdzone: numpy 2.4.6, scipy 1.17.1, matplotlib 3.11.2, mujoco 3.14.0, model Skydio X2
 (4 silniki, 1 kamera), renderowanie offscreen działa.
 
+## Model drona i podgląd
+
+- `sim/assets/x2/` — Skydio X2 z Menagerie (Apache-2.0) bez wypalonych tarcz śmigieł; fizyka bez zmian.
+  Generowane przez `python sim/tools/build_x2_assets.py` (potrzebne `third_party/` tylko do regeneracji).
+- `sim/propellers.py` — łopaty dorysowywane do sceny, prędkość obrotu ∝ sqrt(ciąg silnika), kierunek
+  zgodny ze znakiem momentu reakcji. Działa też z `mujoco.Renderer` (`props.draw(renderer.scene, data)`).
+- `sim/control.py` — `RateController`: interfejs zespołu `RateCommand(thrust [N], roll/pitch/yaw_rate [rad/s])`
+  → PID prędkości kątowych → mixer (macierz alokacji z geometrii silników) → `data.ctrl`.
+  Nad nim `VelocityController` do ręcznego latania (prędkość zadana → przechylenie → prędkości kątowe,
+  trzymanie wysokości). Używa prawdziwego stanu z symulatora — tylko do podglądu, nie jako wejście sieci.
+- `python -m sim.viewer` — ręczne latanie (Windows, klawisze trzymane): `W`/`S` przód/tył,
+  `A`/`D` lewo/prawo, `Shift`/`Ctrl` wznoszenie/opadanie, `Q`/`E` powolny obrót, `Backspace` reset,
+  `Spacja` pauza. Bez klawiszy dron trzyma pozycję i wysokość. Litery są też skrótami flag
+  wbudowanego podglądu MuJoCo (W wireframe, S cienie, ...), więc viewer przywraca flagi w każdej klatce.
+
 ## Dalej
 
 1. Dwie kamery-oczy na modelu X2.

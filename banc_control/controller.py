@@ -17,6 +17,8 @@ class BancController:
         decoder: ManualDecoder | None = None,
         visual_gain: float = 1.0,
         haltere_gain: float = 0.5,
+        haltere_roll_weight: float = 0.0,
+        haltere_yaw_weight: float = 0.5,
         substeps: int = 4,
         **dynamics_kw,
     ) -> None:
@@ -25,8 +27,15 @@ class BancController:
         self.decoder = decoder or ManualDecoder()
         self.visual_gain = visual_gain
         self.haltere_gain = haltere_gain
+        # Wagi roll_rate / yaw_rate w napędzie halter. Aferenty halter L/R w v888 ruszają głównie
+        # MN sterujące (yaw ±1), roll słabo (~−0.15), więc jeden kanał L/R nie stabilizuje obu osi:
+        # z roll w pętli dron wpadał w ciągły obrót. Domyślnie tylko yaw, poziom trzyma symulator.
+        self.haltere_roll_weight = haltere_roll_weight
+        self.haltere_yaw_weight = haltere_yaw_weight
         self.substeps = substeps
-        self.haltere_sign = 1.0  # ustalany przez calibrate_haltere_sign()
+        self.haltere_sign = 1.0  # roll_rate → haltery; ustalany przez calibrate_haltere_sign()
+        self.yaw_axis_sign = 1.0  # odwracany przez calibrate_yaw_sign()
+        self.haltere_yaw_sign = 1.0  # yaw_rate → haltery; osobny znak, ta sama kalibracja
         self._haltere = {g: connectome.group_indices(g) for g in HALTERE_GROUPS}
         motor = [connectome.group_indices(g) for g in MOTOR_GROUPS]
         self._motor_idx = np.concatenate(motor)
@@ -57,7 +66,8 @@ class BancController:
             # Haltery mierzą prędkość kątową. Kodowanie gyro → aferenty halter L/R (oficjalna
             # grupa BANC body_part_sensory=haltere) to nasza abstrakcja, nie model czucia halter.
             roll_rate, _, yaw_rate = imu.gyro
-            drive = self.haltere_sign * (roll_rate + yaw_rate)
+            drive = (self.haltere_roll_weight * self.haltere_sign * roll_rate
+                     + self.haltere_yaw_weight * self.haltere_yaw_sign * yaw_rate)
             ext[self._haltere["haltere_aff_R"]] += self.haltere_gain * max(drive, 0.0)
             ext[self._haltere["haltere_aff_L"]] += self.haltere_gain * max(-drive, 0.0)
         return ext
@@ -81,22 +91,53 @@ class BancController:
 
     def calibrate_haltere_sign(self, visual: list[BancActivation] | None = None,
                                rate: float = 1.5, steps: int = 30) -> float:
-        """Kodowanie gyro → aferenty halter L/R jest naszą abstrakcją, więc znak dobieramy
-        empirycznie: ten, przy którym BANC odpowiada na przechył komendą roll przeciwną."""
-        self.haltere_sign = 1.0
+        """Kodowanie gyro → aferenty halter L/R jest naszą abstrakcją, więc znaki dobieramy
+        empirycznie: te, przy których BANC odpowiada na obrót komendą przeciwną. Osobno dla
+        roll_rate (komenda roll) i yaw_rate (komenda yaw), przy wagach 1. Zwraca znak roll.
+        Po ``calibrate_yaw_sign`` — ona może odwrócić oś yaw dekodera."""
+        weights = self.haltere_roll_weight, self.haltere_yaw_weight
+        self.haltere_sign = self.haltere_yaw_sign = 1.0
+        self.haltere_roll_weight, self.haltere_yaw_weight = 1.0, 0.0
         roll = self.decoder.decode(self._settle(visual or [], ImuState(gyro=(rate, 0.0, 0.0)), steps)).roll
         self.haltere_sign = -1.0 if roll > 0 else 1.0
+        self.haltere_roll_weight, self.haltere_yaw_weight = 0.0, 1.0
+        yaw = self.decoder.decode(self._settle(visual or [], ImuState(gyro=(0.0, 0.0, rate)), steps)).yaw
+        self.haltere_yaw_sign = -1.0 if yaw > 0 else 1.0
+        self.haltere_roll_weight, self.haltere_yaw_weight = weights
         self.dyn.reset()
         return self.haltere_sign
+
+    def _mean_yaw(self, frames: list, skip: float = 0.5) -> float:
+        self.dyn.reset()
+        yaws = [self.decoder.decode(self._step_features(v, None)).yaw for v in frames]
+        return float(np.mean(yaws[int(len(yaws) * skip):]))
+
+    def calibrate_yaw_sign(self, turn_right: list, turn_left: list) -> float:
+        """Znak osi yaw z odruchu optomotorycznego, nie ze statycznego celu (ten po poprawce
+        orientacji oczu nie rozróżnia stron). ``turn_right`` / ``turn_left``: kolejne klatki
+        wzroku przy wymuszonym obrocie drona w prawo / w lewo. Stabilizacja = komenda yaw
+        przeciwna do obrotu; jeśli wychodzi zgodna, odwracamy oś yaw dekodera (przełożenie
+        MN sterujących L−R → yaw to nasze założenie). Zwraca różnicę yaw(prawo) − yaw(lewo)
+        po kalibracji (< 0 = stabilizuje)."""
+        diff = self._mean_yaw(turn_right) - self._mean_yaw(turn_left)
+        if diff > 0:
+            self.decoder.M[3] *= -1
+            self.yaw_axis_sign *= -1
+            diff = -diff
+        self.dyn.reset()
+        return diff
 
     def calibrate_scale(self, stimuli: list[list[BancActivation]], steps: int = 30) -> None:
         """Plan C: odpala bodźce referencyjne (np. beacon lewo/prawo) i skaluje odczyt MN."""
         self.decoder.calibrate_scale([self._settle(v, None, steps) for v in stimuli])
         self.dyn.reset()
 
-    def step(self, visual: list[BancActivation] | VisualBatch, imu: ImuState | None = None) -> FlightCommand:
+    def _step_features(self, visual: list[BancActivation] | VisualBatch, imu: ImuState | None) -> np.ndarray:
         self.dyn.step(self.external_input(visual, imu), self.substeps)
-        feats = self.motor_features()
+        return self.motor_features()
+
+    def step(self, visual: list[BancActivation] | VisualBatch, imu: ImuState | None = None) -> FlightCommand:
+        feats = self._step_features(visual, imu)
         cmd = self.decoder.decode(feats)
         cmd.debug = {"motor_features": feats, "unmatched_ids": self.unmatched_ids}
         return cmd

@@ -126,6 +126,7 @@ def test_calibrate_scale_brings_commands_to_unit_range():
 
 def test_haltere_sign_calibration_makes_loop_corrective():
     c, ctrl = make_controller()
+    ctrl.haltere_roll_weight = 1.0  # domyślnie roll nie idzie przez haltery
     vision = FakeVision(c)
     ctrl.calibrate_scale([vision(-0.8), vision(0.8)])
     ctrl.calibrate_haltere_sign()
@@ -147,3 +148,29 @@ def test_gpu_matches_cpu():
             ctrl.step(stim, ImuState(gyro=(1.0, 0.0, 0.0)))
         feats[dev] = ctrl.motor_features()
     assert np.allclose(feats["cpu"], feats["cuda"], atol=1e-5)
+
+
+def test_yaw_sign_from_rotation_makes_optomotor_corrective():
+    c, ctrl = make_controller()
+    vision = FakeVision(c)
+    ctrl.calibrate_scale([vision(-0.8), vision(0.8)])
+    # W mini grafie pobudzenie lewej strony daje yaw > 0. Udajemy, że tak BANC odpowiada na
+    # obrót drona w prawo → bez kalibracji odruch optomotoryczny wzmacniałby obrót.
+    turn_right = [vision(-0.8)] * 20
+    turn_left = [vision(0.8)] * 20
+    assert ctrl._mean_yaw(turn_right) > ctrl._mean_yaw(turn_left)
+    diff = ctrl.calibrate_yaw_sign(turn_right, turn_left)
+    assert diff < 0 and ctrl.yaw_axis_sign == -1
+    assert ctrl._mean_yaw(turn_right) < 0 < ctrl._mean_yaw(turn_left)
+    assert ctrl.calibrate_yaw_sign(turn_right, turn_left) < 0 and ctrl.yaw_axis_sign == -1  # stabilne
+
+
+def test_haltere_yaw_rate_has_own_sign():
+    c, ctrl = make_controller()
+    ctrl.calibrate_scale([FakeVision(c)(-0.8), FakeVision(c)(0.8)])
+    ctrl.calibrate_haltere_sign()
+    assert ctrl.haltere_yaw_sign in (-1.0, 1.0)
+    ctrl.dyn.reset()
+    for _ in range(30):
+        cmd = ctrl.step([], ImuState(gyro=(0.0, 0.0, 1.5)))
+    assert cmd.yaw <= 1e-9  # obrót w prawo nie może dawać komendy w prawo
