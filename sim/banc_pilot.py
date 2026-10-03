@@ -221,9 +221,11 @@ class BancPilot:
         """Obserwacja → FlightCommand z BANC (konwencja BANC); ``cmd.debug["motor_features"]`` do uczenia."""
         from banc_control import ImuState
 
+        t0 = time.perf_counter()
         left, right = obs["eyes"]
         gx, gy, gz = (float(v) for v in obs["imu"][:3])
         cmd = self.ctrl.step(self.bridge.step_batch(left, right), ImuState(gyro=(gx, gy, -gz)))  # yaw + = w prawo
+        steer = None  # dla panelu BANC: skąd jest kurs
         if self.world is not None:  # BANC (normalizacja z kalibracji) + czujniki drona → komenda
             from sim.world_decoder import gps_yaw, sensors_from_obs, vision_weight
 
@@ -233,13 +235,26 @@ class BancPilot:
             yaw_banc = cmd.yaw
             beacon = obs.get("beacon", np.zeros(2))
             w_vis = vision_weight(float(beacon[1]), self.vision_range)
-            cmd.yaw = float(np.clip(w_vis * yaw_banc + (1 - w_vis) * gps_yaw(beacon), -1, 1))
+            yaw_gps = gps_yaw(beacon)
+            cmd.yaw = float(np.clip(w_vis * yaw_banc + (1 - w_vis) * yaw_gps, -1, 1))
             cmd.debug = {"x": x, "sensors": sens, "yaw_banc": yaw_banc, "w_vis": w_vis}
-        elif self.assist:
+            if self.view is not None:
+                from sim.brain_panel import steer_from_decoder
+
+                steer = steer_from_decoder(self.world.w_yaw, x, yaw_banc, bias=True,
+                                           yaw_gps=yaw_gps if np.isfinite(self.vision_range) else None, w_vis=w_vis,
+                                           distance=float(beacon[1]) if np.isfinite(self.vision_range) else None)
+        elif self.view is not None:
+            from sim.brain_panel import steer_from_decoder
+
+            dec = self.ctrl.decoder
+            steer = steer_from_decoder(dec.M[3], dec.normalized(cmd.debug["motor_features"]), cmd.yaw, bias=dec.bias)
+        if self.world is None and self.assist:
             cmd.roll = 0.0  # ze wspomaganiem roll z BANC nie idzie do drona
         self.cmd = cmd
         if self.view is not None:
-            self.image = self.view.render(self.ctrl.dyn.rates_at(np.arange(self.ctrl.c.n)), cmd)
+            self.image = self.view.render(self.ctrl.dyn.rates_at(np.arange(self.ctrl.c.n)), cmd,
+                                          (time.perf_counter() - t0) * 1e3, steer)
         return cmd
 
     def action(self, cmd) -> np.ndarray:
