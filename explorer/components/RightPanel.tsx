@@ -12,7 +12,7 @@ const CLASS_PL: Record<string, string> = {
 };
 const REGION_SHORT: Record<string, string> = { optic_lobe: "płat wzr.", central_brain: "mózg", ventral_nerve_cord: "VNC" };
 const REGION_NAMES: Record<string, string> = { optic_lobe: "Płat wzrokowy", central_brain: "Mózg centralny", ventral_nerve_cord: "VNC", "ascending/descending/inne": "Inne / szyja" };
-const REGION_COLORS = ["#2fd3c4", "#a98bff", "#ff4fb0", "#6f7896"];
+const REGION_COLORS = ["#2dd4bf", "#a1a1aa", "#fb7185", "#52525b"];
 
 export function RegionOverview({ data }: { data: Prepared }) {
   const [by, setBy] = useState<"class" | "region">("class");
@@ -33,7 +33,7 @@ export function RegionOverview({ data }: { data: Prepared }) {
       </h2>
       <div className="donut">
         <svg viewBox="-60 -60 120 120" role="img" aria-label="Wykres pierścieniowy">
-          <circle r={R} fill="none" stroke="#1b2140" strokeWidth={20} />
+          <circle r={R} fill="none" stroke="#27272a" strokeWidth={20} />
           {items.map((i) => {
             const len = (i.n / total) * C, el = (
               <circle key={i.name} r={R} fill="none" stroke={i.color} strokeWidth={20}
@@ -42,8 +42,8 @@ export function RegionOverview({ data }: { data: Prepared }) {
             off += len;
             return el;
           })}
-          <text y={-2} textAnchor="middle" fill="#e8ebf7" fontSize={13} fontWeight={600} fontFamily="var(--font-display)">{fmt(total)}</text>
-          <text y={12} textAnchor="middle" fill="#8a93b5" fontSize={7.5}>neuronów</text>
+          <text y={-2} textAnchor="middle" fill="#fafafa" fontSize={13} fontWeight={600} fontFamily="var(--font-display)">{fmt(total)}</text>
+          <text y={12} textAnchor="middle" fill="#a1a1aa" fontSize={7.5}>neuronów</text>
         </svg>
         <div className="rows">
           {items.map((i) => (

@@ -45,21 +45,21 @@ export interface Cmd {
 }
 
 export const CATS = [
-  { key: "sens", name: "Sensoryczne", short: "Sensoryczne", color: "#4f8cff", classes: ["sensory", "sensory_ascending", "sensory_descending"] },
-  { key: "motor", name: "Motoryczne", short: "Motoryczne", color: "#ff4fb0", classes: ["motor", "visceral_circulatory", "ascending_visceral_circulatory"] },
-  { key: "dnan", name: "Zstępujące / wstępujące", short: "DN / AN", color: "#ffb547", classes: ["descending", "ascending"] },
-  { key: "vis", name: "Wzrokowe", short: "Wzrokowe", color: "#2fd3c4", classes: ["optic_lobe_intrinsic", "visual_projection", "visual_centrifugal"] },
-  { key: "inter", name: "Interneurony", short: "Interneurony", color: "#a98bff", classes: ["central_brain_intrinsic", "ventral_nerve_cord_intrinsic"] },
-  { key: "unk", name: "Nieoznaczone", short: "Nieoznaczone", color: "#6f7896", classes: ["unknown"] },
+  { key: "sens", name: "Sensoryczne", short: "Sensoryczne", color: "#60a5fa", classes: ["sensory", "sensory_ascending", "sensory_descending"] },
+  { key: "motor", name: "Motoryczne", short: "Motoryczne", color: "#fb7185", classes: ["motor", "visceral_circulatory", "ascending_visceral_circulatory"] },
+  { key: "dnan", name: "Zstępujące / wstępujące", short: "DN / AN", color: "#fbbf24", classes: ["descending", "ascending"] },
+  { key: "vis", name: "Wzrokowe", short: "Wzrokowe", color: "#2dd4bf", classes: ["optic_lobe_intrinsic", "visual_projection", "visual_centrifugal"] },
+  { key: "inter", name: "Interneurony", short: "Interneurony", color: "#a1a1aa", classes: ["central_brain_intrinsic", "ventral_nerve_cord_intrinsic"] },
+  { key: "unk", name: "Nieoznaczone", short: "Nieoznaczone", color: "#52525b", classes: ["unknown"] },
 ] as const;
 
 export const GROUPS = [
-  { key: "dn_flight_power", name: "DN flight power", color: "#ffb547" },
-  { key: "dn_flight_steering", name: "DN flight steering", color: "#ff8a3d" },
-  { key: "wing_power", name: "MN wing power", color: "#ff4fb0" },
-  { key: "wing_steering", name: "MN wing steering", color: "#ff7ad9" },
-  { key: "wing_tension", name: "MN wing tension", color: "#d65cff" },
-  { key: "haltere_aff", name: "Aferenty halter", color: "#4f8cff" },
+  { key: "dn_flight_power", name: "DN flight power", color: "#fbbf24" },
+  { key: "dn_flight_steering", name: "DN flight steering", color: "#f59e0b" },
+  { key: "wing_power", name: "MN wing power", color: "#fb7185" },
+  { key: "wing_steering", name: "MN wing steering", color: "#f43f5e" },
+  { key: "wing_tension", name: "MN wing tension", color: "#e11d48" },
+  { key: "haltere_aff", name: "Aferenty halter", color: "#60a5fa" },
 ] as const;
 
 export const groupKey = (n: NeuronRec) => n.group.replace(/_[LR]$/, "");
