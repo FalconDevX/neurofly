@@ -18,9 +18,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: OSMesa (render MuJoCo bez ekranu)
+      - name: "OSMesa (render MuJoCo bez ekranu)"
         run: sudo apt-get update && sudo apt-get install -y libosmesa6-dev
-      - name: Instalacja (bez vision: torch/FlyVis)
+      - name: "Instalacja (bez vision: torch/FlyVis)"
         run: pip install -e ".[sim,dev]"
       - name: pytest
         run: pytest -q -rs
@@ -38,5 +38,5 @@ jobs:
           cache: npm
           cache-dependency-path: explorer/package-lock.json
       - run: npm ci
-      - name: TypeScript (build wymaga data/viz z BANC, więc tylko typy)
+      - name: "TypeScript (build wymaga data/viz z BANC, więc tylko typy)"
         run: npm run typecheck
