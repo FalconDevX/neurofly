@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 
-from .connectome import HALTERE_GROUPS, Connectome
+from .connectome import HALTERE_GROUPS, MOTOR_GROUPS, Connectome
 from .contracts import BancActivation, FlightCommand, ImuState
 from .dynamics import RateDynamics
-from .readout import ManualDecoder, motor_features
+from .readout import ManualDecoder
 
 
 class BancController:
@@ -28,17 +28,18 @@ class BancController:
         self.substeps = substeps
         self.haltere_sign = 1.0  # ustalany przez calibrate_haltere_sign()
         self._haltere = {g: connectome.group_indices(g) for g in HALTERE_GROUPS}
+        motor = [connectome.group_indices(g) for g in MOTOR_GROUPS]
+        self._motor_idx = np.concatenate(motor)
+        self._motor_split = np.cumsum([len(m) for m in motor])[:-1]
         self.unmatched_ids = 0
 
     def external_input(self, visual: list[BancActivation], imu: ImuState | None) -> np.ndarray:
         ext = np.zeros(self.c.n)
-        self.unmatched_ids = 0
-        for a in visual:
-            i = self.c.index_of(a.banc_root_id)
-            if i is None:
-                self.unmatched_ids += 1
-            else:
-                ext[i] += self.visual_gain * a.activity
+        idx = self.c.indices_of(np.fromiter((a.banc_root_id for a in visual), np.int64, len(visual)))
+        act = np.fromiter((a.activity for a in visual), float, len(visual))
+        hit = idx >= 0
+        self.unmatched_ids = int((~hit).sum())
+        np.add.at(ext, idx[hit], self.visual_gain * act[hit])
         if imu is not None:
             # Haltery mierzą prędkość kątową. Kodowanie gyro → aferenty halter L/R (oficjalna
             # grupa BANC body_part_sensory=haltere) to nasza abstrakcja, nie model czucia halter.
@@ -48,11 +49,16 @@ class BancController:
             ext[self._haltere["haltere_aff_L"]] += self.haltere_gain * max(-drive, 0.0)
         return ext
 
+    def motor_features(self) -> np.ndarray:
+        """Średnia aktywność grup MOTOR_GROUPS (6,); z GPU kopiuje tylko motoneurony."""
+        parts = np.split(self.dyn.rates_at(self._motor_idx), self._motor_split)
+        return np.array([p.mean() if len(p) else 0.0 for p in parts])
+
     def _settle(self, visual: list[BancActivation], imu: ImuState | None, steps: int) -> np.ndarray:
         self.dyn.reset()
         for _ in range(steps):
             self.dyn.step(self.external_input(visual, imu), self.substeps)
-        return motor_features(self.c, self.dyn.r)
+        return self.motor_features()
 
     def calibrate_rest(self, steps: int = 50, visual: list[BancActivation] | None = None) -> None:
         """Baseline dekodera = odczyt MN dla sceny neutralnej (``visual``, np. beacon na wprost).
@@ -76,8 +82,8 @@ class BancController:
         self.dyn.reset()
 
     def step(self, visual: list[BancActivation], imu: ImuState | None = None) -> FlightCommand:
-        rates = self.dyn.step(self.external_input(visual, imu), self.substeps)
-        feats = motor_features(self.c, rates)
+        self.dyn.step(self.external_input(visual, imu), self.substeps)
+        feats = self.motor_features()
         cmd = self.decoder.decode(feats)
         cmd.debug = {"motor_features": feats, "unmatched_ids": self.unmatched_ids}
         return cmd

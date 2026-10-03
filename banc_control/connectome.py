@@ -71,14 +71,19 @@ class Connectome:
     W: sp.csr_matrix            # (N, N) — wiersz = post, kolumna = pre
 
     def __post_init__(self) -> None:
-        self._index = {int(r): i for i, r in enumerate(self.root_ids)}
+        self._index = pd.Index(self.root_ids)
 
     @property
     def n(self) -> int:
         return len(self.root_ids)
 
     def index_of(self, root_id: int) -> int | None:
-        return self._index.get(int(root_id))
+        i = self.indices_of(np.array([root_id]))[0]
+        return None if i < 0 else int(i)
+
+    def indices_of(self, root_ids: np.ndarray) -> np.ndarray:
+        """Wektorowo: root ID → indeks w grafie, -1 gdy brak."""
+        return self._index.get_indexer(np.asarray(root_ids, dtype=np.int64))
 
     def group_indices(self, group: str) -> np.ndarray:
         return np.flatnonzero(self.groups == group)
@@ -101,7 +106,8 @@ class Connectome:
         root_ids = meta["banc_888_id"].astype(np.int64).to_numpy()
         index = pd.Series(np.arange(len(root_ids)), index=root_ids)
 
-        edges = edges[edges["count"] >= min_count]
+        # autapsy: dokumentacja v888 mówi, że są usunięte, ale część została w pliku — paper ich nie liczy
+        edges = edges[(edges["count"] >= min_count) & (edges["pre"] != edges["post"])]
         pre_ids, post_ids = edges["pre"].astype(np.int64), edges["post"].astype(np.int64)
         keep = (pre_ids.isin(index.index) & post_ids.isin(index.index)).to_numpy()
         pre = index.loc[pre_ids[keep]].to_numpy()
