@@ -50,27 +50,27 @@ def ground_z(env) -> float:
 
 
 def clear_corridor(env, width: float = 3.0) -> int:
-    """Chowa pod teren drzewa w pasie ±``width`` m (+ zasięg korony) wokół odcinka start–cel.
+    """Chowa pod teren bloki w pasie ±``width`` m (+ zasięg bloku) wokół odcinka start–cel.
 
-    Na planszy stoi 55–80 drzew, na 1 m wysokości prosta droga do celu zwykle jest zablokowana,
+    Na planszy stoi 40–60 bloków, na 1 m wysokości prosta droga do celu zwykle jest zablokowana,
     a omijania przeszkód nie uczymy (NASZE ZAŁOŻENIE: czysty korytarz). Zmiana tylko w pamięci modelu;
-    reszta lasu zostaje i jest widoczna dla oczu. Wywoływać po ``env.reset``. Zwraca liczbę schowanych.
+    reszta bloków zostaje i jest widoczna dla oczu. Wywoływać po ``env.reset``. Zwraca liczbę schowanych.
     """
-    from sim import trees
+    from sim import blocks
 
-    if not trees.has_pool(env.model):
+    if not blocks.has_pool(env.model):
         return 0
     start = env.data.xpos[env.drone_id][:2].copy()
     seg = env.target.position(env.data)[:2] - start
     hidden = 0
-    for i in range(trees.POOL_SIZE):
-        body = env.model.body(f"tree{i}").id
+    for i in range(blocks.POOL_SIZE):
+        body = env.model.body(f"block{i}").id
         pos = env.model.body_pos[body]
-        if pos[2] <= trees.HIDDEN_Z + 1:
+        if pos[2] <= blocks.HIDDEN_Z + 1:
             continue
         t = np.clip(np.dot(pos[:2] - start, seg) / max(np.dot(seg, seg), 1e-9), 0.0, 1.0)
-        if np.linalg.norm(pos[:2] - start - t * seg) < width + trees.ENVELOPE_RADIUS:
-            env.model.body_pos[body] = (0, 0, trees.HIDDEN_Z)
+        if np.linalg.norm(pos[:2] - start - t * seg) < width + blocks.ENVELOPE_RADIUS:
+            env.model.body_pos[body] = (0, 0, blocks.HIDDEN_Z)
             hidden += 1
     mujoco.mj_forward(env.model, env.data)
     return hidden
@@ -226,7 +226,7 @@ class WorldRunner:
         env.start_noise = start_noise
         obs, info = env.reset(options={"world_seed": int(world_seed)})
         if self.clear_path and clear_corridor(env):
-            obs["eyes"] = np.stack(env.eyes.render(env.data))  # oczy już bez schowanych drzew
+            obs["eyes"] = np.stack(env.eyes.render(env.data))  # oczy już bez schowanych bloków
         self.pilot.reset(obs)
         return obs, info
 

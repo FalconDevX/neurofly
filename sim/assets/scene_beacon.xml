@@ -24,8 +24,14 @@
     <!-- kratka tej samej wielkości co na płaskiej podłodze (150 powtórzeń tekstury na 60 m) -->
     <!-- reflectance 0: odbicie (było 0.05, praktycznie niewidoczne) wymuszało drugi przebieg renderu z cieniami —
          ~8 ms na każde oko i klatkę podglądu; bez niego oko renderuje się w ~1.3 ms -->
-    <material name="terrain" texture="groundplane" texrepeat="150 150" reflectance="0"/>
-    <material name="wall" rgba="0.55 0.6 0.65 0.35"/>
+    <!-- styl "blueprint" (poligon testowy): tekstury z sim/tools/build_blueprint_textures.py.
+         Podłoże: kafel 4 x 4 m (siatka 0.5 m), 15 powtórzeń na 60 m. -->
+    <texture name="blueprint_ground" type="2d" file="../textures/blueprint_ground.png"/>
+    <texture name="blueprint_block" type="cube" file="../textures/blueprint_block.png"/>
+    <material name="terrain" texture="blueprint_ground" texrepeat="15 15" reflectance="0"/>
+    <!-- bloki (sim/blocks.py): odcień z geom_rgba -->
+    <material name="block" texture="blueprint_block" specular="0.2" shininess="0.3"/>
+    <material name="wall" rgba="0.45 0.7 1.0 0.25"/>
     <material name="target_zone" rgba="0.95 0.45 0.05 1"/>
     <material name="target_border" rgba="0.95 0.95 0.95 1"/>
     <material name="beacon_pole" rgba="0.05 0.05 0.05 1"/>

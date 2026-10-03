@@ -31,7 +31,7 @@ class CrashDetector:
         return float(np.arccos(np.clip(data.xmat[self.body_id][8], -1, 1)))
 
     def touching_ground(self, data):
-        """Czy dron dotyka czegokolwiek (terenu, drzewa)."""
+        """Czy dron dotyka czegokolwiek (terenu, bloku)."""
         contacts = data.contact[:data.ncon]
         g1, g2 = contacts.geom1, contacts.geom2
         return bool(np.any(np.isin(g1, self.drone_geoms) ^ np.isin(g2, self.drone_geoms)))

@@ -100,7 +100,7 @@ def main():
     print(__doc__)
     print(f"sterowanie: {'BANC ' + str(args.banc) if args.banc else 'model ' + args.model if policy else 'klawiatura (bez modelu dron sam nie leci)'}")
     reset_policy = None
-    if banc:  # po każdym resecie: korytarz do celu bez drzew (jak w treningu), stan sieci od nowa
+    if banc:  # po każdym resecie: korytarz do celu bez bloków (jak w treningu), stan sieci od nowa
         from sim.banc_pilot import clear_corridor
 
         def banc_reset(o):

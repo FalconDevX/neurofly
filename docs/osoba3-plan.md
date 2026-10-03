@@ -31,7 +31,7 @@ python -m mujoco.viewer --mjcf=third_party/mujoco_menagerie/skydio_x2/scene.xml
 ```
 
 **Laptop z dwiema kartami (np. Intel UHD + NVIDIA):** Windows domyślnie odpala Pythona na zintegrowanej
-karcie — scena z terenem i drzewami renderuje się wtedy ~230 ms/klatkę (lag), na GTX 1650 ~10 ms.
+karcie — scena z terenem i blokami renderuje się wtedy ~230 ms/klatkę (lag), na GTX 1650 ~10 ms.
 Ustawienie „Wysoka wydajność” dla Pythona ze środowiska (jak Ustawienia → System → Ekran → Grafika):
 
 ```powershell
@@ -63,14 +63,17 @@ Sprawdzone: numpy 2.4.6, scipy 1.17.1, matplotlib 3.11.2, mujoco 3.14.0, model S
 - Sceny: `sim/assets/common.xml` (dron, światło, niebo, zielona kratka) + `scene_hover.xml` (płaska podłoga)
   i `scene_beacon.xml` (domyślna w podglądzie): losowy teren 60 × 60 m (pagórki do +2 m, zagłębienia
   do −1 m) otoczony ścianami 8 m + cel: pomarańczowe pole lądowania 1.2 × 1.2 m z czarnym masztem 2.5 m
-  i czerwoną flagą. `sim/terrain.py`: `load_scene(path)` ładuje scenę z pulą drzew, a
-  `randomize(model, data, seed)` losuje teren, drzewa i cel (~0.1 s) — start zawsze płaski, cel 15–23 m
+  i czerwoną flagą. `sim/terrain.py`: `load_scene(path)` ładuje scenę z pulą bloków, a
+  `randomize(model, data, seed)` losuje teren, bloki i cel (~0.1 s) — start zawsze płaski, cel 15–23 m
   od startu, ≥ 6 m od ścian, na wyrównanym placu (też na wzniesieniu albo w dołku). Scenę beacon zawsze
-  ładujemy przez `load_scene` + `randomize` (bez nich nie ma drzew, a teren jest płaski na −1 m).
-  `sim/trees.py`: 55–80 drzew — świerk, dąb, brzoza, krzak (wysokość, pień, korona losowane w zakresach
-  gatunku); nie nachodzą na siebie, na start (≥ 3 m) ani na plac celu (≥ 2.5 m), nad czubkiem zostaje
-  ≥ 1.5 m do granicy planszy. Pień i korona kolidują z dronem. Pula drzew jest kompilowana jako
-  obwiednia największego drzewa — inaczej MuJoCo (bvh_aabb liczone przy kompilacji) gubi kolizje.
+  ładujemy przez `load_scene` + `randomize` (bez nich nie ma bloków, a teren jest płaski na −1 m).
+  Styl „blueprint” (poligon testowy, pod prezentację): granatowe podłoże z siatką 0.5 / 2 / 4 m i jasne bloki
+  z siatką, tekstury z `sim/tools/build_blueprint_textures.py` (`sim/assets/textures/`).
+  `sim/blocks.py` (zastąpił drzewa): 40–60 bloków — kostka, filar, ściana, wieża (2–3 piętra), schodki;
+  losowy obrót i odcień (biel, błękit, stal, rzadko bursztyn); nie nachodzą na siebie, na start (≥ 3 m)
+  ani na plac celu (≥ 2.5 m), nad szczytem zostaje ≥ 1.5 m do granicy planszy. Wszystkie kolidują z dronem.
+  Pula bloków jest kompilowana jako obwiednia największego bloku — inaczej MuJoCo (bvh_aabb liczone przy
+  kompilacji) gubi kolizje.
   `outside_arena()`: dotyk ściany albo lot ponad 8 m = poza planszą — podgląd resetuje wtedy drona na start
   (ten sam świat).
 - `sim/episode.py`: `CrashDetector` — wywrotka = nieudana próba: > 1 s do góry nogami (przechył > 90°,

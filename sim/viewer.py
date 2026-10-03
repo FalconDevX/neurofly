@@ -2,7 +2,7 @@
 
     python -m sim.viewer [--scene sim/assets/scene_beacon.xml] [--seed 1234]
 
-Domyślna scena: losowy teren 60 x 60 m (pagórki i zagłębienia) z drzewami, otoczony ścianami, i cel —
+Domyślna scena: losowy teren 60 x 60 m (pagórki i zagłębienia) z blokami (styl blueprint), otoczony ścianami, i cel —
 pomarańczowe pole lądowania z masztem i flagą, 15–23 m od startu w losowym kierunku (sim/terrain.py).
 Ziarno świata jest wypisywane w konsoli; --seed odtwarza ten sam świat.
 Gdy dron jest nad polem (niżej niż 1.5 m), pole robi się zielone. Gdy dotknie ściany albo
@@ -25,7 +25,7 @@ Klawisze (w oknie podglądu, trzymane):
     L            kamera przypięta za tyłem drona (obraca się z nim) / swobodna (mysz)
     kółko        zoom (od siebie = przybliż)
     Backspace    reset drona do startu (ten sam świat)
-    N            nowy losowy świat (teren, drzewa, cel) i reset drona
+    N            nowy losowy świat (teren, bloki, cel) i reset drona
     Spacja       pauza / wznowienie
     CapsLock     wiatr wł. / wył. (domyślnie 8 m/s w losowym kierunku, podmuchy ±3, --wind-speed; strzałka w prawym dolnym rogu
                  pokazuje, dokąd wieje względem widoku kamery — w górę = w głąb ekranu)

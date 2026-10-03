@@ -1,7 +1,7 @@
 """WorldEnv — środowisko treningowe (Gymnasium) drona X2: lot do beacona na losowym świecie.
 
 (Inne niż sim/env.py: DroneEnv tam to pętla FlyVis + BANC na płaskiej scenie ze słupem; WorldEnv to
-pełny świat Osoby 3 — teren, drzewa, cel z flagą, wiatr, wywrotka — z interfejsem Gymnasium.)
+pełny świat Osoby 3 — teren, bloki, cel z flagą, wiatr, wywrotka — z interfejsem Gymnasium.)
 
     from sim.world_env import WorldEnv
     env = WorldEnv()                      # scena beacon, tryb acro (Plan A), oczy włączone

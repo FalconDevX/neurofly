@@ -1,6 +1,6 @@
-"""Losowy świat sceny beacon: teren (pagórki i zagłębienia), drzewa (sim/trees.py) + pozycja celu.
+"""Losowy świat sceny beacon: teren (pagórki i zagłębienia), bloki (sim/blocks.py) + pozycja celu.
 
-Scenę beacon ładujemy przez load_scene() (dokłada pulę drzew) i zawsze losujemy przez randomize().
+Scenę beacon ładujemy przez load_scene() (dokłada pulę bloków) i zawsze losujemy przez randomize().
 
 Teren to heightfield "terrain" z scene_beacon.xml (60 x 60 m, otoczony ścianami). Wysokości liczymy
 w numpy i wpisujemy do model.hfield_data — każde ziarno daje inny świat, to samo ziarno ten sam.
@@ -9,8 +9,8 @@ Gwarancje (żeby dało się dolecieć do flagi):
 - start (0, 0) jest płaski na poziomie gruntu z = 0,
 - cel leży 15–23 m od startu i co najmniej 6 m od ścian, na wyrównanym placu (pole lądowania
   leży płasko także na zboczu, szczycie pagórka albo w dołku),
-- drzewa nie stoją na starcie, na placu celu ani na sobie nawzajem,
-- teren mieści się w [-1, +2] m, a nad czubkiem każdego drzewa zostaje >= 1.5 m do górnej granicy
+- bloki nie stoją na starcie, na placu celu ani na sobie nawzajem,
+- teren mieści się w [-1, +2] m, a nad szczytem każdego bloku zostaje >= 1.5 m do górnej granicy
   planszy (8 m) — nad wszystkim da się przelecieć.
 
 Granica planszy (outside_arena): wnętrze ścian do ich wysokości. Dron, który dotknie ściany albo
@@ -20,7 +20,7 @@ wzleci ponad nią, jest poza planszą — podgląd resetuje go wtedy na start (t
 import mujoco
 import numpy as np
 
-from sim import trees
+from sim import blocks
 
 GROUND_DEPTH = 1.0         # m, najgłębsze zagłębienie poniżej gruntu (= -pos z geomu terrain)
 START = (0.0, 0.0)
@@ -103,21 +103,21 @@ def randomize(model, data, seed=None):
     iy = int(round((ty + half_y) / (2 * half_y) * (nrow - 1)))
     model.body_pos[model.body("target").id] = (tx, ty, height[iy, ix])
 
-    if trees.has_pool(model):
+    if blocks.has_pool(model):
         def ground(x, y):
             j = int(round((x + half_x) / (2 * half_x) * (ncol - 1)))
             i = int(round((y + half_y) / (2 * half_y) * (nrow - 1)))
             return height[i, j]
-        trees.place(model, rng, ground, half_x, START, (tx, ty), WALL_HEIGHT)
+        blocks.place(model, rng, ground, half_x, START, (tx, ty), WALL_HEIGHT)
     mujoco.mj_forward(model, data)
     return seed
 
 
 def load_scene(path):
-    """Ładuje scenę; jeśli ma teren (scena beacon), dokłada pulę drzew. Zwraca MjModel."""
+    """Ładuje scenę; jeśli ma teren (scena beacon), dokłada pulę bloków. Zwraca MjModel."""
     spec = mujoco.MjSpec.from_file(str(path))
     if any(h.name == "terrain" for h in spec.hfields):
-        trees.add_pool(spec)
+        blocks.add_pool(spec)
     return spec.compile()
 
 
