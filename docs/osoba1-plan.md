@@ -204,6 +204,16 @@ fałszywy kontrast w szachownicę. Most zamienia klatki na luminancję przed Ret
 wystarczy `VisionClient.calibrate(render)` (patrz `example_sim_client.py`). Kalibracja syntetyczna
 dawała w MuJoCo `thrust` = 0, bo jasność sceny różni się od kalibracyjnej.
 
+Sprawdzenie z prawdziwym FlyVis + MuJoCo (punkt planu domknięcia „O1/O2: potwierdzić z FlyVis"):
+- `example_sim_client.py`: kalibracja na scenach MuJoCo 13 s, potem ~22 ms na klatkę z przesyłem,
+  `unmatched_ids` 0. Przy obrocie w prawo 30°/s `yaw` = −1 (hamuje obrót). Po kalibracji cel z lewej
+  → `yaw −1,00` (dobrze), cel z prawej → `yaw −0,25` (powinno być +). `thrust` waha się 0–0,83,
+  `roll` −1…+0,48; pierwsze klatki po resecie `thrust` 0 / `roll` −1.
+- `check_optomotor.py` (pełna kalibracja syntetyczna): obrót −90°/s i +90°/s dają ten sam
+  `yaw +0,40`. Komenda yaw prawie nie zależy od kierunku obrotu (`optomotor_yaw_diff` −0,17),
+  więc odruch **nie jest potwierdzony**. Wejście ruchu do BANC ma poprawny kierunek
+  (`check_rotation_banc.py` 4/4), więc słaby sygnał kierunkowy powstaje na ścieżce BANC → dekoder.
+
 ## Znane ograniczenia
 
 - Lewa strona: orientacja z symetrii i DRA, bo dane T4 lewej strony są za słabe do samodzielnego dopasowania (za mało opisanych wejść T4).
