@@ -1,0 +1,23 @@
+# Środowisko Osoby 3: symulacja drona w MuJoCo
+# conda env create -f environment.yml
+# Paczki numeryczne idą przez pip, żeby numpy 2.x (wymagany przez mujoco)
+# nie mieszał się z binarkami z conda zbudowanymi pod numpy 1.x.
+name: neurofly-sim
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - git
+  - pip:
+      - numpy>=2
+      - scipy
+      - matplotlib
+      - pyyaml
+      - tqdm
+      - pyzmq            # most do procesów Osoby 1 / Osoby 2 (osobne środowiska)
+      - mujoco>=3.2
+      - gymnasium>=1.0
+      - opencv-python
+      - imageio
+      - imageio-ffmpeg  # nagrywanie dema do MP4
