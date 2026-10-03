@@ -325,6 +325,54 @@ def fly_xray(W=2600, H=1500, yaw=0.15, pitch=0.22, name="fly_xray.png"):
     cv2.imwrite(str(OUT / name), cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
 
 
+def style_assets(seed=7):
+    """Elementy stylu (jak plakat „Aquire”): tło z szarymi, rozmytymi odłamkami i czerwono-pomarańczowa linia akcentu."""
+    rng = np.random.default_rng(seed)
+    for name, W, H, side in (("shards_title.png", 1920, 1080, "both"), ("shards_corner.png", 1920, 1080, "corner")):
+        img = np.zeros((H, W, 3), np.float32) + BG
+        sharp, soft = np.zeros_like(img), np.zeros_like(img)
+        anchors = [(0.0, 1.0), (1.0, 0.0), (0.15, 0.85), (0.92, 0.2)] if side == "both" else [(1.0, 0.0), (0.9, 0.12)]
+        for ax, ay in anchors:
+            for _ in range(5):
+                c = np.array([ax * W, ay * H]) + rng.normal(0, [W * 0.12, H * 0.15])
+                pts = (c + rng.normal(0, [W * 0.16, H * 0.22], (3, 2))).astype(np.int32)
+                tone = float(rng.uniform(22, 70))
+                layer = soft if rng.random() < 0.45 else sharp
+                cv2.fillConvexPoly(layer, pts, (tone, tone, tone * 1.04), cv2.LINE_AA)
+                if rng.random() < 0.5:  # jasna krawędź odłamka
+                    a, b = pts[rng.integers(3)], pts[rng.integers(3)]
+                    cv2.line(sharp, tuple(map(int, a)), tuple(map(int, b)), (95, 95, 100), 2, cv2.LINE_AA)
+        # rozmyty snop światła jak na plakacie
+        beam = np.zeros_like(img)
+        x0 = int(W * (0.62 if side == "both" else 0.8))
+        cv2.fillConvexPoly(beam, np.array([[x0, int(H * 0.25)], [x0 + 60, int(H * 0.22)], [x0 + 420, int(H * 0.62)], [x0 + 330, int(H * 0.68)]]),
+                           (150, 150, 155), cv2.LINE_AA)
+        img = np.maximum(img, sharp) + cv2.GaussianBlur(soft, (0, 0), 18) * 0.9 + cv2.GaussianBlur(beam, (0, 0), 28) * 0.55
+        vign = np.exp(-(((np.arange(W) - W / 2) / (W * 0.75)) ** 2))[None, :, None] * np.exp(
+            -(((np.arange(H) - H / 2) / (H * 0.9)) ** 2))[:, None, None]
+        img = BG + (img - BG) * (0.55 + 0.45 * (1 - vign))  # środek ciemniejszy — tu idzie treść
+        cv2.imwrite(str(OUT / name), cv2.cvtColor(np.clip(img, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+    # linia akcentu: róż → pomarańcz, z poświatą (pionowa)
+    H, W = 900, 40
+    t = np.linspace(0, 1, H)[:, None]
+    col = (1 - t) * np.array([255, 45, 111]) + t * np.array([255, 106, 43])
+    line = np.zeros((H, W, 4), np.float32)
+    xs = np.arange(W) - W / 2
+    core = (np.abs(xs) <= 1.5).astype(np.float32)
+    glow = np.exp(-(xs / 6.0) ** 2) * 0.35
+    a = np.clip(core + glow, 0, 1)[None, :] * np.ones((H, 1))
+    line[..., :3] = col[:, None, :]
+    line[..., 3] = a * 255
+    cv2.imwrite(str(OUT.parent / "accent_line.png"), cv2.cvtColor(line.astype(np.uint8), cv2.COLOR_RGBA2BGRA))
+    # podwójne konturowe trójkąty (wierzchołkiem w dół), białe, półprzezroczyste
+    ch = np.zeros((240, 360, 4), np.uint8)
+    for off, w in ((0, 300), (34, 230)):
+        cx, top = 180, 20 + off
+        pts = np.array([[cx - w // 2, top], [cx + w // 2, top], [cx, top + int(w * 0.62)]], np.int32)
+        cv2.polylines(ch, [pts], True, (235, 235, 240, 190), 4, cv2.LINE_AA)
+    cv2.imwrite(str(OUT.parent / "chevron.png"), cv2.cvtColor(ch, cv2.COLOR_RGBA2BGRA))
+
+
 def finish():
     """PNG → JPG dla prezentacji, logo z eksploratora, dane wykresu ewaluacji."""
     import shutil
@@ -341,12 +389,14 @@ def finish():
 
 
 if __name__ == "__main__":
-    what = sys.argv[1:] or ["connectome", "circuit", "flybody", "sim", "retina", "finish"]
+    what = sys.argv[1:] or ["connectome", "circuit", "flybody", "style", "sim", "retina", "finish"]
     if "connectome" in what:
         connectome(2600, 1300, yaw=0.5, pitch=0.25, name="connectome_wide.png", horizontal=True)
         connectome(1400, 1700, yaw=0.55, pitch=0.25, name="connectome_3d.png", labels=REGION_LABELS, margin_x=0.12)
     if "circuit" in what:
         circuit(1400, 1700, labels=CIRCUIT_LABELS, margin_x=0.12)
+    if "style" in what:
+        style_assets()
     if "flybody" in what:
         fly_xray()
     if "sim" in what:

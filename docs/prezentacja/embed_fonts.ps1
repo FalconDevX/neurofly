@@ -1,6 +1,6 @@
 # Osadza fonty (Roboto) w NeuroFly.pptx przez PowerPoint, żeby prezentacja wyglądała tak samo na komputerach bez Roboto.
 #   powershell -ExecutionPolicy Bypass -File docs\prezentacja\embed_fonts.ps1 [ścieżka.pptx]
-# Wymaga PowerPointa i zainstalowanego Roboto (Apache 2.0: github.com/googlefonts/roboto, wersja statyczna).
+# Wymaga PowerPointa i zainstalowanych fontów: Roboto (Apache 2.0, github.com/googlefonts/roboto) i Michroma (OFL, Google Fonts).
 param([string]$Path = (Join-Path $PSScriptRoot "NeuroFly.pptx"))
 $Path = (Resolve-Path $Path).Path
 $tmp = [System.IO.Path]::ChangeExtension($Path, ".embedded.pptx")

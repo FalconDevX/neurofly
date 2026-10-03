@@ -11,7 +11,7 @@ const DATA = JSON.parse(fs.readFileSync(A("data.json"), "utf8"));
 
 const THEME = {
   name: "NeuroFly",
-  headFontFace: "Roboto", // osadzony w .pptx (embed_fonts.ps1), licencja Apache 2.0
+  headFontFace: "Michroma", // szeroki, geometryczny (styl „Aquire”); OFL — osadzony w .pptx (embed_fonts.ps1)
   bodyFontFace: "Roboto",
   colors: {
     dk1: "09090B", // tło (zinc-950)
@@ -29,6 +29,9 @@ const THEME = {
   },
 };
 const T = THEME.colors;
+// akcent interfejsu w stylu plakatu: czerwono-różowy → pomarańczowy (kolory danych w accent1–4 zostają jak w renderach)
+const RED = "FF2D6F", ORANGE = "FF6A2B";
+const HEAD = THEME.headFontFace;
 
 const pres = new pptxgen();
 pres.layout = "LAYOUT_16x9"; // 10 × 5.625 in
@@ -40,18 +43,21 @@ const C = pres.SchemeColor;
 // ---------- układy (layouts) ----------
 pres.defineSlideMaster({
   title: "TITLE",
-  background: { color: T.dk1 },
+  background: { path: A("shards_title.jpg") },
   objects: [],
 });
 pres.defineSlideMaster({
   title: "CONTENT",
-  background: { color: T.dk1 },
+  background: { path: A("shards_corner.jpg") },
   objects: [
+    { image: { path: A("accent_line.png"), x: 0.44, y: 0.2, w: 0.04, h: 0.82 } },   // czerwona linia przy tytule
+    { image: { path: A("chevron.png"), x: 9.05, y: 0.28, w: 0.45, h: 0.3 } },        // podwójne trójkąty
     { image: { path: A("logo.png"), x: 0.5, y: 5.13, w: 0.34, h: 0.2 } },
     { text: { text: "NeuroFly", options: { x: 0.9, y: 5.08, w: 2, h: 0.3, fontSize: 10, color: T.lt2, margin: 0 } } },
     {
       placeholder: {
-        options: { name: "title", type: "title", x: 0.5, y: 0.35, w: 9, h: 0.65, fontSize: 28, bold: true, color: T.lt1, margin: 0, valign: "top", align: "left" },
+        options: { name: "title", type: "title", x: 0.62, y: 0.5, w: 8.3, h: 0.4, fontSize: 16, bold: false, color: T.lt1, margin: 0,
+          valign: "top", align: "left", charSpacing: 1, fontFace: HEAD },
         text: "",
       },
     },
@@ -63,8 +69,9 @@ pres.defineSlideMaster({
 const shadow = () => ({ type: "outer", color: "000000", blur: 18, offset: 6, angle: 90, opacity: 0.55 });
 
 function card(slide, x, y, w, h, name) {
-  slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
-    x, y, w, h, rectRadius: 0.12, fill: { color: T.dk2 }, line: { color: T.accent6, width: 0.75 }, shadow: shadow(), objectName: name,
+  // ostre prostokąty (geometrycznie, jak plakat), lekko przezroczyste nad tłem z odłamkami
+  slide.addShape(pres.shapes.RECTANGLE, {
+    x, y, w, h, fill: { color: T.dk2, transparency: 12 }, line: { color: "3F3F46", width: 0.75 }, shadow: shadow(), objectName: name,
   });
 }
 
@@ -73,7 +80,7 @@ function text(slide, t, opts) {
 }
 
 function stat(slide, x, y, w, value, label, color, name) {
-  text(slide, value, { x, y, w, h: 0.6, fontSize: 36, bold: true, color: color || T.lt1, objectName: `${name}-value` });
+  text(slide, value, { x, y, w, h: 0.6, fontSize: 32, fontFace: "Roboto Light", color: color || T.lt1, objectName: `${name}-value` });
   text(slide, label, { x, y: y + 0.62, w, h: 0.5, fontSize: 12, color: T.lt2, objectName: `${name}-label` });
 }
 
@@ -94,7 +101,9 @@ function arrow(slide, x1, y1, x2, y2, color, name) {
 
 function content(title, section) {
   const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: section });
-  s.addText(title, { placeholder: "title" });
+  // mała czerwona etykieta sekcji nad tytułem (rozstrzelone wersaliki, jak „FREE TYPEFACE” na plakacie)
+  text(s, section.toUpperCase(), { x: 0.62, y: 0.24, w: 6, h: 0.22, fontSize: 8, color: RED, charSpacing: 6, objectName: "eyebrow" });
+  s.addText(title.toUpperCase(), { placeholder: "title" });
   return s;
 }
 
@@ -104,11 +113,14 @@ pres.addSection({ title: "Start" });
 {
   const s = pres.addSlide({ masterName: "TITLE", sectionTitle: "Start" });
   s.addImage({ path: A("fly_xray.jpg"), x: 3.55, y: 0.1, w: 6.45, h: 3.72, objectName: "render-fly-xray" });
-  s.addImage({ path: A("logo.png"), x: 0.6, y: 1.25, w: 1.2, h: 0.71, objectName: "logo" });
-  text(s, "NeuroFly", { x: 0.6, y: 2.1, w: 5, h: 0.9, fontSize: 54, bold: true, objectName: "title" });
-  text(s, "A fruit-fly brain\nflies a drone", { x: 0.6, y: 3.0, w: 3.5, h: 0.8, fontSize: 20, color: T.lt2, objectName: "subtitle" });
-  text(s, "Full BANC v888 connectome · 175,401 neurons · closed loop in MuJoCo", {
-    x: 0.6, y: 4.55, w: 8.8, h: 0.35, fontSize: 12, color: T.accent5, objectName: "footer",
+  s.addImage({ path: A("logo.png"), x: 0.6, y: 0.95, w: 1.0, h: 0.59, objectName: "logo" });
+  text(s, "BANC V888 CONNECTOME", { x: 0.6, y: 1.78, w: 5.2, h: 0.25, fontSize: 9, color: RED, charSpacing: 5, objectName: "eyebrow" });
+  text(s, "NEUROFLY", { x: 0.6, y: 2.05, w: 5.2, h: 0.85, fontSize: 40, fontFace: HEAD, charSpacing: 2, objectName: "title" });
+  s.addImage({ path: A("accent_line.png"), x: 0.6, y: 3.05, w: 0.05, h: 0.95, objectName: "accent-line" });
+  s.addImage({ path: A("chevron.png"), x: 0.8, y: 3.1, w: 0.42, h: 0.28, objectName: "chevron" });
+  text(s, "A fruit-fly brain\nflies a drone", { x: 1.35, y: 3.05, w: 3.0, h: 0.8, fontSize: 18, color: T.lt2, objectName: "subtitle" });
+  text(s, "FULL BANC V888 CONNECTOME  ·  175,401 NEURONS  ·  CLOSED LOOP IN MUJOCO", {
+    x: 0.6, y: 4.75, w: 8.8, h: 0.3, fontSize: 8, color: T.lt2, charSpacing: 4, objectName: "footer",
   });
   s.addNotes("NeuroFly: the drone camera image goes through a model of the fly eye (FlyVis), then through the real " +
     "Drosophila connectome (BANC v888, brain + ventral nerve cord), and flight-neuron activity steers the drone in simulation. " +
@@ -118,7 +130,7 @@ pres.addSection({ title: "Start" });
 // 2. Idea: pętla zamknięta
 pres.addSection({ title: "Idea" });
 {
-  const s = content("Closed loop: vision → connectome → flight", "Idea");
+  const s = content("Closed loop: vision → flight", "Idea");
   const steps = [
     ["Image", "two eye cameras on the drone", T.accent1],
     ["Connectome", "BANC v888 on the GPU", T.accent2],
@@ -173,7 +185,7 @@ pres.addSection({ title: "Pipeline" });
 
 // 4. Przed connectomem: oczy → siatkówka
 {
-  const s = content("Before the signal reaches BANC: the fly eye", "Pipeline");
+  const s = content("Before BANC: the fly eye", "Pipeline");
   const ims = [["eye_left.jpg", "Left camera"], ["retina_left.jpg", "Left retina"], ["eye_right.jpg", "Right camera"], ["retina_right.jpg", "Right retina"]];
   ims.forEach(([f, cap], i) => {
     const x = 0.5 + i * 2.27;
@@ -190,7 +202,7 @@ pres.addSection({ title: "Pipeline" });
 // 5. Connectome BANC v888
 pres.addSection({ title: "Connectome" });
 {
-  const s = content("BANC v888: brain and ventral nerve cord", "Connectome");
+  const s = content("BANC v888: brain + nerve cord", "Connectome");
   s.addImage({ path: A("connectome_3d.jpg"), x: 0.4, y: 1.05, w: 3.35, h: 4.07, objectName: "render-3d" });
   stat(s, 4.3, 1.25, 2.6, "175,401", "neurons (glia and trachea excluded)", T.lt1, "s-neurons");
   stat(s, 7.0, 1.25, 2.6, "18.6 M", "synapses in connections ≥ 5", T.lt1, "s-syn");
@@ -206,7 +218,7 @@ pres.addSection({ title: "Connectome" });
 
 // 6. Model dynamiki
 {
-  const s = content("How we compute activity on the connectome", "Connectome");
+  const s = content("Activity on the connectome", "Connectome");
   card(s, 0.5, 1.3, 5.3, 1.25, "eq-card");
   text(s, "r ← r + dt/τ · (−r + tanh(relu(g · W r + I)))", { x: 0.75, y: 1.62, w: 4.9, h: 0.5, fontSize: 20, fontFace: "Cambria", objectName: "eq" });
   const rows = [
@@ -216,7 +228,7 @@ pres.addSection({ title: "Connectome" });
     ["GPU", "sparse CSR matrix in torch: ~2.6 ms per frame (RTX 4060)"],
   ];
   rows.forEach(([k, v], i) => {
-    text(s, k, { x: 0.5, y: 2.85 + i * 0.5, w: 1.1, h: 0.4, fontSize: 14, bold: true, color: T.accent1, objectName: `k-${i}` });
+    text(s, k, { x: 0.5, y: 2.85 + i * 0.5, w: 1.1, h: 0.4, fontSize: 14, bold: true, color: RED, objectName: `k-${i}` });
     text(s, v, { x: 1.65, y: 2.85 + i * 0.5, w: 4.2, h: 0.45, fontSize: 12, color: T.lt1, objectName: `v-${i}` });
   });
   card(s, 6.2, 1.3, 3.3, 3.45, "sign-card");
@@ -232,7 +244,7 @@ pres.addSection({ title: "Connectome" });
 
 // 7. Obwód lotu
 {
-  const s = content("Flight circuit: official BANC annotations only", "Connectome");
+  const s = content("Flight circuit: official annotations", "Connectome");
   s.addImage({ path: A("circuit_3d.jpg"), x: 0.4, y: 1.05, w: 3.35, h: 4.07, objectName: "render-circuit" });
   const groups = [
     ["DN flight power", "235", T.accent2, "super_cluster: flight power"],
@@ -254,17 +266,17 @@ pres.addSection({ title: "Connectome" });
 // 8. Odczyt: DN niosą stronę celu
 pres.addSection({ title: "Readout" });
 {
-  const s = content("Target side lives in single DNs, not in averages", "Readout");
+  const s = content("Target side lives in single DNs", "Readout");
   s.addChart(pres.charts.BAR, [{ name: "Target-side accuracy", labels: ["6 MN averages", "single MNs", "vision (VPN)", "single flight DNs"], values: [68, 84, 94, 99] }], {
     x: 0.5, y: 1.2, w: 5.6, h: 3.6, barDir: "bar",
-    chartColors: [T.accent5, T.accent5, T.accent5, T.accent1],
+    chartColors: [T.accent5, T.accent5, T.accent5, RED],
     showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: '0"%"', dataLabelColor: T.lt1, dataLabelFontSize: 12, dataLabelFontFace: "+mn-lt",
     catAxisLabelColor: T.lt2, catAxisLabelFontSize: 12, catAxisLabelFontFace: "+mn-lt",
     valAxisHidden: true, valAxisMaxVal: 110, valAxisMinVal: 0,
     valGridLine: { style: "none" }, catGridLine: { style: "none" }, catAxisLineShow: false,
     showLegend: false, showTitle: false, objectName: "chart-side",
   });
-  stat(s, 6.6, 1.35, 3, "99%", "target-side accuracy from 375 single flight DNs (validated on an unseen distance)", T.accent1, "s-dn");
+  stat(s, 6.6, 1.35, 3, "99%", "target-side accuracy from 375 single flight DNs (validated on an unseen distance)", RED, "s-dn");
   stat(s, 6.6, 2.85, 3, "68%", "from 6 MN group averages — averaging cancels the left / right difference", T.lt2, "s-mn");
   s.addNotes("Ridge regression angle ~ activity, target at −90…+90° at 3 distances, validated on the distance left out " +
     "of training (scripts/check_side_decoding.py).");
@@ -272,13 +284,13 @@ pres.addSection({ title: "Readout" });
 
 // 9. Ograniczenie danych
 {
-  const s = content("v888 limitation: optic lobe asymmetry", "Readout");
+  const s = content("v888 limit: optic lobe asymmetry", "Readout");
   card(s, 0.5, 1.3, 4.3, 2.9, "left-card");
   card(s, 5.2, 1.3, 4.3, 2.9, "right-card");
   stat(s, 0.85, 1.55, 3.7, "36%", "of left-lobe neurons have a cell type", T.lt1, "s-l");
   stat(s, 0.85, 2.85, 3.7, "5,535", "neurons driven by the left eye", T.lt2, "s-l2");
-  stat(s, 5.55, 1.55, 3.7, "80%", "of right-lobe neurons have a cell type", T.accent1, "s-r");
-  stat(s, 5.55, 2.85, 3.7, "16,927", "neurons driven by the right eye", T.accent1, "s-r2");
+  stat(s, 5.55, 1.55, 3.7, "80%", "of right-lobe neurons have a cell type", RED, "s-r");
+  stat(s, 5.55, 2.85, 3.7, "16,927", "neurons driven by the right eye", RED, "s-r2");
   text(s, "The FlyVis → BANC map goes by cell type, so the left eye reaches ~3× fewer neurons. Equalizing the input did not change " +
     "the result; the single-DN readout still recognizes both sides.", { x: 0.5, y: 4.35, w: 9, h: 0.6, fontSize: 12, color: T.lt2, objectName: "note" });
 }
@@ -296,7 +308,7 @@ pres.addSection({ title: "Simulator" });
 // 11. Trening
 pres.addSection({ title: "Training" });
 {
-  const s = content("Training: only the decoder learns, BANC stays fixed", "Training");
+  const s = content("Training: only the decoder learns", "Training");
   const steps = [
     ["Teacher", "knows the true state: target bearing, height, speed"],
     ["Mixed flight", "the teacher flies with probability β, β: 1 → 0"],
@@ -306,7 +318,7 @@ pres.addSection({ title: "Training" });
   steps.forEach(([h, d], i) => {
     const y = 1.3 + i * 0.86;
     card(s, 0.5, y, 4.9, 0.72, `t-${i}`);
-    text(s, String(i + 1), { x: 0.72, y: y + 0.16, w: 0.4, h: 0.4, fontSize: 20, bold: true, color: T.accent1, objectName: `t-${i}-n` });
+    text(s, String(i + 1), { x: 0.72, y: y + 0.16, w: 0.4, h: 0.4, fontSize: 18, fontFace: HEAD, color: RED, objectName: `t-${i}-n` });
     text(s, h, { x: 1.2, y: y + 0.1, w: 4, h: 0.3, fontSize: 14, bold: true, objectName: `t-${i}-h` });
     text(s, d, { x: 1.2, y: y + 0.39, w: 4.1, h: 0.3, fontSize: 11, color: T.lt2, objectName: `t-${i}-d` });
   });
@@ -323,21 +335,21 @@ pres.addSection({ title: "Training" });
 // 12. Wyniki: zawis i skręt
 pres.addSection({ title: "Results" });
 {
-  const s = content("Result: turning toward the target with BANC", "Results");
+  const s = content("Result: turning to the target", "Results");
   const labels = ["target −60°", "target −30°", "target +30°", "target +60°"];
   s.addChart(pres.charts.BAR, [
     { name: "before training", labels, values: ["-60", "-30", "+30", "+60"].map((k) => +DATA.before[k].toFixed(1)) },
     { name: "after training", labels, values: ["-60", "-30", "+30", "+60"].map((k) => +DATA.after[k].toFixed(1)) },
   ], {
     x: 0.5, y: 1.2, w: 5.8, h: 3.7, barDir: "col", barGapWidthPct: 60,
-    chartColors: [T.accent5, T.accent1],
+    chartColors: [T.accent5, RED],
     showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: '0.0"°"', dataLabelColor: T.lt1, dataLabelFontSize: 11, dataLabelFontFace: "+mn-lt",
     catAxisLabelColor: T.lt2, catAxisLabelFontSize: 12, catAxisLabelFontFace: "+mn-lt",
     valAxisHidden: true, valGridLine: { style: "none" }, catGridLine: { style: "none" },
     showLegend: true, legendPos: "t", legendColor: T.lt2, legendFontSize: 11, legendFontFace: "+mn-lt",
     showTitle: false, objectName: "chart-eval",
   });
-  stat(s, 6.8, 1.35, 2.8, "2.65°", "mean final heading error without the teacher (25.1° before training)", T.accent1, "s-err");
+  stat(s, 6.8, 1.35, 2.8, "2.65°", "mean final heading error without the teacher (25.1° before training)", RED, "s-err");
   stat(s, 6.8, 2.75, 2.8, "1,000", "episodes on 2 GPUs: 672 + 328", T.lt1, "s-ep");
   text(s, "Hover on a flat scene, height held by the simulator. Heading: single BANC DNs only.", {
     x: 6.8, y: 4.05, w: 2.8, h: 0.8, fontSize: 11, color: T.lt2, objectName: "s-note",
@@ -346,13 +358,13 @@ pres.addSection({ title: "Results" });
 
 // 13. Wyniki: lot w świecie (w toku)
 {
-  const s = content("Flying to a target in the world: in progress", "Results");
+  const s = content("World flight: in progress", "Results");
   card(s, 0.5, 1.3, 2.85, 1.75, "c-teacher");
   card(s, 3.58, 1.3, 2.85, 1.75, "c-before");
   card(s, 6.65, 1.3, 2.85, 1.75, "c-model");
   stat(s, 0.8, 1.55, 2.4, "6 / 6", "the teacher reaches the target — there is something to learn from", T.lt1, "w-t");
   stat(s, 3.88, 1.55, 2.4, "18.1 m", "before training: mean closest distance to the target", T.lt2, "w-b");
-  stat(s, 6.95, 1.55, 2.4, "9.0 m", "after 192 episodes: 2× closer, 0 crashes, target 0 / 6", T.accent1, "w-m");
+  stat(s, 6.95, 1.55, 2.4, "9.0 m", "after 192 episodes: 2× closer, 0 crashes, target 0 / 6", RED, "w-m");
   text(s, "Honestly: the model flies stably and gets closer to the target, but does not reach it yet. Next run: validation every " +
     "50 episodes keeping the best weights, harder samples weighted up, GPS for long-range heading.", { x: 0.5, y: 3.35, w: 9, h: 0.8, fontSize: 13, color: T.lt2, objectName: "w-note" });
 }
@@ -380,10 +392,12 @@ pres.addSection({ title: "End" });
 {
   const s = pres.addSlide({ masterName: "TITLE", sectionTitle: "End" });
   s.addImage({ path: A("connectome_wide.jpg"), x: 4.1, y: 0.75, w: 5.9, h: 2.95, transparency: 35, objectName: "render-bg" });
-  s.addImage({ path: A("logo.png"), x: 0.6, y: 1.35, w: 1.0, h: 0.59, objectName: "logo" });
-  text(s, "Thank you", { x: 0.6, y: 2.1, w: 5, h: 0.8, fontSize: 44, bold: true, objectName: "thanks" });
-  text(s, "Live demo: BANC panel in flight\n3D connectome explorer", { x: 0.6, y: 2.95, w: 3.5, h: 0.75, fontSize: 16, color: T.lt2, objectName: "demo" });
-  text(s, "github.com/FalconDevX/neurofly", { x: 0.6, y: 4.55, w: 6, h: 0.35, fontSize: 12, color: T.accent1, objectName: "repo" });
+  s.addImage({ path: A("logo.png"), x: 0.6, y: 1.1, w: 1.0, h: 0.59, objectName: "logo" });
+  text(s, "NEUROFLY  ·  HACKYEAH", { x: 0.6, y: 1.85, w: 4.5, h: 0.25, fontSize: 9, color: RED, charSpacing: 6, objectName: "eyebrow" });
+  text(s, "THANK YOU", { x: 0.6, y: 2.12, w: 5.2, h: 0.8, fontSize: 36, fontFace: HEAD, charSpacing: 2, objectName: "thanks" });
+  s.addImage({ path: A("accent_line.png"), x: 0.6, y: 2.95, w: 0.05, h: 0.8, objectName: "accent-line" });
+  text(s, "Live demo: BANC panel in flight\n3D connectome explorer", { x: 0.85, y: 2.98, w: 3.4, h: 0.75, fontSize: 15, color: T.lt2, objectName: "demo" });
+  text(s, "GITHUB.COM/FALCONDEVX/NEUROFLY", { x: 0.6, y: 4.6, w: 6, h: 0.3, fontSize: 9, color: RED, charSpacing: 4, objectName: "repo" });
 }
 
 (async () => {
