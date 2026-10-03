@@ -172,7 +172,7 @@ Dane: `npm run dev` / `build` uruchamia `scripts/sync-data.mjs`, który kopiuje 
 
 ## Uwagi do repo
 
-- `docs/prezentacja/` (NeuroFly.pptx + build.js) powstało w innej sesji; nie było weryfikowane względem wyników z v888.
+- `docs/prezentacja/`: NeuroFly.pptx (15 slajdów, ciemny minimalistyczny styl, rendery 3D z BANC v888 i MuJoCo, liczby z v888 i treningu). `render_assets.py` (.venv312) → `assets/`, `node build.js` (pptxgenjs) → .pptx.
 
 - CI: `.github/workflows/tests.yml` — pytest (bez GPU/FlyVis/danych BANC, te testy się pomijają) i typy eksploratora.
 - Uruchamianie: torch z CUDA, potem `pip install -e .[all]` (extras: `vision`, `sim`, `dev`), `python scripts/download_banc.py`, `flyvis download-pretrained`, `pytest`.

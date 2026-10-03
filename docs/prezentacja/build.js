@@ -1,347 +1,396 @@
+// Prezentacja NeuroFly: minimalistyczna, ciemna, z renderami 3D z prawdziwych danych BANC v888 i MuJoCo.
+//   node build.js [NeuroFly.pptx]   (npm i pptxgenjs; grafiki w assets/ robi render_assets.py, liczby z repo / CLAUDE.md)
+//   APPLY_THEME=<skill pptx>/scripts/apply_theme.js — opcjonalnie wpisuje kolory motywu do pliku
+const path = require("path");
+const fs = require("fs");
 const pptxgen = require("pptxgenjs");
-const React = require("react");
-const ReactDOMServer = require("react-dom/server");
-const sharp = require("sharp");
-const gi = require("react-icons/gi");
-const fa = require("react-icons/fa6");
-const { applyTheme } = require("C:/Users/mateu/.claude/skills/synced/26456d5b-782a-4a8b-a5a9-dd8dcdd3f668_eac86e09-a636-449d-ad84-8f3300b72176/pptx/scripts/apply_theme.js");
 
-const OUT = process.argv[2] || "NeuroFly.pptx";
+const OUT = process.argv[2] || path.join(__dirname, "NeuroFly.pptx");
+const A = (f) => path.join(__dirname, "assets", f);
+const DATA = JSON.parse(fs.readFileSync(A("data.json"), "utf8"));
 
 const THEME = {
   name: "NeuroFly",
-  headFontFace: "Cambria",
+  headFontFace: "Calibri",
   bodyFontFace: "Calibri",
   colors: {
-    dk1: "2B2116", // ciemny bursztyn tułowia
-    lt1: "FFFFFF",
-    dk2: "6B5844", // przygaszony brąz, tekst drugorzędny
-    lt2: "F1EFEC", // neutralne tło kart
-    accent1: "B3122E", // czerwień oka Drosophila
-    accent2: "D9A441", // miód
-    accent3: "8A6A44",
-    accent4: "4E6E58",
-    accent5: "E3C27E",
-    accent6: "9C8E80",
-    hlink: "B3122E",
-    folHlink: "8A6A44",
+    dk1: "09090B", // tło (zinc-950)
+    lt1: "FAFAFA", // tekst
+    dk2: "18181B", // karty (zinc-900)
+    lt2: "A1A1AA", // tekst drugorzędny (zinc-400)
+    accent1: "2DD4BF", // teal — wzrok, jedyny akcent interfejsu
+    accent2: "FBBF24", // amber — neurony zstępujące (DN)
+    accent3: "FB7185", // rose — motoneurony
+    accent4: "60A5FA", // blue — haltery / sensoryka
+    accent5: "52525B", // zinc-600
+    accent6: "27272A", // zinc-800 — linie, ramki
+    hlink: "2DD4BF",
+    folHlink: "A1A1AA",
   },
 };
-const H = THEME.colors;
+const T = THEME.colors;
 
 const pres = new pptxgen();
-pres.layout = "LAYOUT_16x9"; // 10 x 5.625
+pres.layout = "LAYOUT_16x9"; // 10 × 5.625 in
 pres.theme = { headFontFace: THEME.headFontFace, bodyFontFace: THEME.bodyFontFace };
-pres.title = "NeuroFly";
+pres.title = "NeuroFly — mózg muszki pilotuje drona";
 pres.author = "Zespół NeuroFly";
 const C = pres.SchemeColor;
 
-// ---------- ikony ----------
-async function icon(Comp, color, size = 256) {
-  const svg = ReactDOMServer.renderToStaticMarkup(React.createElement(Comp, { color: "#" + color, size }));
-  const buf = await sharp(Buffer.from(svg)).png().toBuffer();
-  return "image/png;base64," + buf.toString("base64");
-}
-
-// heks z ikoną — motyw omatidium
-function hexIcon(slide, img, x, y, d, fill, name) {
-  slide.addShape(pres.shapes.HEXAGON, {
-    x, y, w: d, h: d * 0.88, fill: { color: fill }, line: { type: "none" }, objectName: name + " hex",
-  });
-  const s = d * 0.5;
-  slide.addImage({ data: img, x: x + (d - s) / 2, y: y + (d * 0.88 - s) / 2, w: s, h: s, objectName: name + " ikona" });
-}
-
-// ---------- layouty ----------
+// ---------- układy (layouts) ----------
 pres.defineSlideMaster({
-  title: "DARK",
-  background: { color: H.dk1 },
-  objects: [
-    { placeholder: { options: { name: "title", type: "title", x: 0.6, y: 1.55, w: 5.4, h: 1.2, fontFace: THEME.headFontFace, fontSize: 48, bold: true, color: C.background1, valign: "bottom", align: "left", margin: 0 }, text: "Tytuł" } },
-    { placeholder: { options: { name: "body", type: "body", x: 0.6, y: 2.85, w: 5.2, h: 1.0, fontSize: 20, color: C.accent2, valign: "top", align: "left", margin: 0 }, text: "Podtytuł" } },
-  ],
+  title: "TITLE",
+  background: { color: T.dk1 },
+  objects: [],
 });
 pres.defineSlideMaster({
   title: "CONTENT",
-  background: { color: H.lt1 },
-  margin: [0.5, 0.5, 0.5, 0.5],
+  background: { color: T.dk1 },
   objects: [
-    { placeholder: { options: { name: "title", type: "title", x: 0.5, y: 0.3, w: 9.0, h: 0.75, fontFace: THEME.headFontFace, fontSize: 28, bold: true, color: C.text1, valign: "middle", align: "left", margin: 0 }, text: "Tytuł" } },
-    { text: { text: "NeuroFly", options: { x: 0.5, y: 5.2, w: 3, h: 0.3, fontSize: 10, color: C.text2, margin: 0 } } },
+    { image: { path: A("logo.png"), x: 0.5, y: 5.13, w: 0.34, h: 0.2 } },
+    { text: { text: "NeuroFly", options: { x: 0.9, y: 5.08, w: 2, h: 0.3, fontSize: 10, color: T.lt2, margin: 0 } } },
+    {
+      placeholder: {
+        options: { name: "title", type: "title", x: 0.5, y: 0.35, w: 9, h: 0.65, fontSize: 28, bold: true, color: T.lt1, margin: 0, valign: "top", align: "left" },
+        text: "",
+      },
+    },
   ],
-  slideNumber: { x: 9.0, y: 5.2, w: 0.5, h: 0.3, fontSize: 10, color: H.dk2, align: "right" },
+  slideNumber: { x: 9.0, y: 5.08, w: 0.5, h: 0.3, fontSize: 10, color: T.lt2, align: "right" },
 });
 
-const T = (slide, text) => slide.addText(text, { placeholder: "title" });
-const txt = (slide, text, o) => slide.addText(text, { isTextBox: true, margin: 0, fontSize: 14, color: C.text1, valign: "top", ...o });
+// ---------- pomocnicze ----------
+const shadow = () => ({ type: "outer", color: "000000", blur: 18, offset: 6, angle: 90, opacity: 0.55 });
+
+function card(slide, x, y, w, h, name) {
+  slide.addShape(pres.shapes.ROUNDED_RECTANGLE, {
+    x, y, w, h, rectRadius: 0.12, fill: { color: T.dk2 }, line: { color: T.accent6, width: 0.75 }, shadow: shadow(), objectName: name,
+  });
+}
+
+function text(slide, t, opts) {
+  slide.addText(t, { isTextBox: true, margin: 0, fontSize: 14, color: T.lt1, valign: "top", ...opts });
+}
+
+function stat(slide, x, y, w, value, label, color, name) {
+  text(slide, value, { x, y, w, h: 0.6, fontSize: 36, bold: true, color: color || T.lt1, objectName: `${name}-value` });
+  text(slide, label, { x, y: y + 0.62, w, h: 0.5, fontSize: 12, color: T.lt2, objectName: `${name}-label` });
+}
+
+function tag(slide, x, y, label, color, name) {
+  // mała pigułka: kropka koloru + etykieta (oznaczenia „z BANC” / „nasze założenie”)
+  slide.addShape(pres.shapes.OVAL, { x, y: y + 0.07, w: 0.12, h: 0.12, fill: { color }, line: { color, width: 0 }, objectName: `${name}-dot` });
+  text(slide, label, { x: x + 0.2, y, w: 3, h: 0.26, fontSize: 11, color: T.lt2, objectName: `${name}-label` });
+}
+
+function arrow(slide, x1, y1, x2, y2, color, name) {
+  // szerokość i wysokość linii muszą być ≥ 0 (ujemne psują plik dla PowerPointa) — kierunek przez odbicie
+  slide.addShape(pres.shapes.LINE, {
+    x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1),
+    flipH: x2 < x1, flipV: y2 < y1,
+    line: { color: color || T.accent5, width: 1.5, endArrowType: "triangle" }, objectName: name,
+  });
+}
+
+function content(title, section) {
+  const s = pres.addSlide({ masterName: "CONTENT", sectionTitle: section });
+  s.addText(title, { placeholder: "title" });
+  return s;
+}
+
+// =================================================================================================
+// 1. Tytuł
+pres.addSection({ title: "Start" });
+{
+  const s = pres.addSlide({ masterName: "TITLE", sectionTitle: "Start" });
+  s.addImage({ path: A("connectome_wide.jpg"), x: 4.1, y: 0.75, w: 5.9, h: 2.95, objectName: "render-connectome" });
+  s.addImage({ path: A("logo.png"), x: 0.6, y: 1.25, w: 1.2, h: 0.71, objectName: "logo" });
+  text(s, "NeuroFly", { x: 0.6, y: 2.1, w: 5, h: 0.9, fontSize: 54, bold: true, objectName: "title" });
+  text(s, "Mózg muszki owocowej\npilotuje drona", { x: 0.6, y: 3.0, w: 3.5, h: 0.8, fontSize: 20, color: T.lt2, objectName: "subtitle" });
+  text(s, "Pełny connectome BANC v888 · 175 401 neuronów · pętla zamknięta w MuJoCo", {
+    x: 0.6, y: 4.55, w: 8.8, h: 0.35, fontSize: 12, color: T.accent5, objectName: "footer",
+  });
+  s.addNotes("NeuroFly: obraz z kamer drona przechodzi przez model oka muszki (FlyVis), potem przez prawdziwy connectome " +
+    "Drosophila (BANC v888, mózg + brzuszny łańcuch nerwowy), a aktywność neuronów lotu steruje dronem w symulatorze.");
+}
+
+// 2. Idea: pętla zamknięta
+pres.addSection({ title: "Idea" });
+{
+  const s = content("Zamknięta pętla: wzrok → connectome → lot", "Idea");
+  const steps = [
+    ["Obraz", "dwie kamery-oczy drona", T.accent1],
+    ["Connectome", "BANC v888 na GPU", T.accent2],
+    ["Sterowanie", "neurony lotu → komendy", T.accent3],
+    ["Ruch", "dron w MuJoCo → nowy obraz", T.accent4],
+  ];
+  const cx = 5, cy = 3.0, R = 1.55;
+  steps.forEach(([h, d, col], i) => {
+    const a = -Math.PI / 2 + (i * Math.PI) / 2;
+    const x = cx + R * 1.55 * Math.cos(a) - 1.15, y = cy + R * Math.sin(a) - 0.42;
+    card(s, x, y, 2.3, 0.84, `step-${i}`);
+    s.addShape(pres.shapes.OVAL, { x: x + 0.18, y: y + 0.18, w: 0.16, h: 0.16, fill: { color: col }, line: { color: col, width: 0 }, objectName: `step-${i}-dot` });
+    text(s, h, { x: x + 0.45, y: y + 0.1, w: 1.75, h: 0.32, fontSize: 15, bold: true, objectName: `step-${i}-title` });
+    text(s, d, { x: x + 0.45, y: y + 0.44, w: 1.8, h: 0.3, fontSize: 11, color: T.lt2, objectName: `step-${i}-desc` });
+  });
+  s.addImage({ path: A("logo.png"), x: 4.45, y: 2.68, w: 1.1, h: 0.65, objectName: "logo-center" });
+  s.addNotes("Każda klatka obrazu przechodzi przez całą pętlę ~30 razy na sekundę. Nic nie jest ręcznie zaprogramowanym " +
+    "regulatorem kursu: kierunek do celu odczytujemy z aktywności neuronów zstępujących (DN) w BANC.");
+}
+
+// 3. Pipeline
+pres.addSection({ title: "Pipeline" });
+{
+  const s = content("Pipeline: od piksela do śmigła", "Pipeline");
+  const nodes = [
+    ["Kamera", "2 oczy MuJoCo, 157°, ±70°", T.accent1],
+    ["Siatkówka", "FlyGym: 721 ommatidiów / oko", T.accent1],
+    ["FlyVis", "model płata wzrokowego", T.accent1],
+    ["Mapa → BANC", "22 462 neuronów v888", T.accent1],
+    ["BANC v888", "175 401 neuronów, GPU", T.accent2],
+    ["Odczyt", "6 grup MN + 375 DN lotu", T.accent3],
+    ["Dekoder", "liniowy, uczony (DAgger)", T.lt2],
+    ["Dron", "thrust · roll · pitch · yaw", T.accent4],
+  ];
+  const w = 1.92, h = 1.02, gx = 0.37, y1 = 1.45, y2 = 3.25;
+  nodes.forEach(([hd, d, col], i) => {
+    const row = i < 4 ? 0 : 1, k = i < 4 ? i : 7 - i; // drugi rząd od prawej do lewej (pętla)
+    const x = 0.5 + k * (w + gx), y = row ? y2 : y1;
+    card(s, x, y, w, h, `node-${i}`);
+    s.addShape(pres.shapes.OVAL, { x: x + 0.16, y: y + 0.2, w: 0.14, h: 0.14, fill: { color: col }, line: { color: col, width: 0 }, objectName: `node-${i}-dot` });
+    text(s, hd, { x: x + 0.38, y: y + 0.12, w: w - 0.5, h: 0.32, fontSize: 15, bold: true, objectName: `node-${i}-title` });
+    text(s, d, { x: x + 0.16, y: y + 0.52, w: w - 0.3, h: 0.42, fontSize: 11, color: T.lt2, objectName: `node-${i}-desc` });
+    if (row === 0 && k < 3) arrow(s, x + w + 0.04, y + h / 2, x + w + gx - 0.04, y + h / 2, T.accent5, `arrow-${i}`);
+    if (row === 1 && k > 0) arrow(s, x - 0.04, y + h / 2, x - gx + 0.04, y + h / 2, T.accent5, `arrow-${i}`);
+  });
+  const xr = 0.5 + 3 * (w + gx) + w / 2;
+  arrow(s, xr, y1 + h + 0.04, xr, y2 - 0.04, T.accent5, "arrow-down");
+  text(s, "następna klatka: nowy obraz z kamer", { x: 0.5, y: 4.45, w: 4, h: 0.3, fontSize: 11, color: T.accent5, objectName: "loop-note" });
+  s.addNotes("Górny rząd: wszystko, co dzieje się przed connectomem. Dolny: connectome, odczyt neuronów lotu, dekoder " +
+    "i dron. Jedna klatka (FlyVis + 4 podkroki dynamiki BANC na GPU) to ~15–20 ms.");
+}
+
+// 4. Przed connectomem: oczy → siatkówka
+{
+  const s = content("Zanim sygnał trafi do BANC: oko muszki", "Pipeline");
+  const ims = [["eye_left.jpg", "Kamera lewa"], ["retina_left.jpg", "Siatkówka lewa"], ["eye_right.jpg", "Kamera prawa"], ["retina_right.jpg", "Siatkówka prawa"]];
+  ims.forEach(([f, cap], i) => {
+    const x = 0.5 + i * 2.27;
+    s.addImage({ path: A(f), x, y: 1.3, w: 2.0, h: 2.28, shadow: shadow(), objectName: `img-${i}` });
+    text(s, cap, { x, y: 3.66, w: 2.0, h: 0.28, fontSize: 11, color: T.lt2, objectName: `cap-${i}` });
+  });
+  text(s, "Kamery MuJoCo z polem widzenia oka muchy → korekcja rybiego oka → 721 heksagonalnych ommatidiów na oko (FlyGym) → " +
+    "FlyVis: wytrenowany model płata wzrokowego oparty na connectomie → aktywność typów komórek mapowana na neurony BANC v888.", {
+    x: 0.5, y: 4.08, w: 9, h: 0.8, fontSize: 13, color: T.lt1, objectName: "explain",
+  });
+  s.addNotes("Cel (czarny słup) jest po prawej stronie: widać go tylko w prawym oku, jako ciemną kolumnę ommatidiów.");
+}
+
+// 5. Connectome BANC v888
+pres.addSection({ title: "Connectome" });
+{
+  const s = content("BANC v888: mózg i brzuszny łańcuch nerwowy", "Connectome");
+  s.addImage({ path: A("connectome_3d.jpg"), x: 0.4, y: 1.05, w: 3.35, h: 4.07, objectName: "render-3d" });
+  stat(s, 4.3, 1.25, 2.6, "175 401", "neuronów (bez glejów i tchawek)", T.lt1, "s-neurons");
+  stat(s, 7.0, 1.25, 2.6, "18,6 mln", "synaps w połączeniach ≥ 5", T.lt1, "s-syn");
+  stat(s, 4.3, 2.55, 2.6, "1,53 mln", "połączeń w grafie modelu", T.lt1, "s-edges");
+  stat(s, 7.0, 2.55, 2.6, "863", "szkielety neuronów lotu (SWC)", T.lt1, "s-skel");
+  tag(s, 4.3, 3.95, "płaty wzrokowe · 105 646", T.accent1, "t-ol");
+  tag(s, 4.3, 4.27, "mózg centralny · 42 620", T.lt2, "t-cb");
+  tag(s, 7.0, 3.95, "VNC · 26 769", T.accent3, "t-vnc");
+  tag(s, 7.0, 4.27, "DN / AN · 3 165", T.accent2, "t-dn");
+  s.addNotes("Oficjalny BANC v888 (Bates et al. 2026, publiczny bucket Lee Lab). Somy z kolumny position; kolory: wzrok teal, " +
+    "DN amber, motoneurony rose. Żadnych syntetycznych grafów.");
+}
+
+// 6. Model dynamiki
+{
+  const s = content("Jak liczymy aktywność na connectomie", "Connectome");
+  card(s, 0.5, 1.3, 5.3, 1.25, "eq-card");
+  text(s, "r ← r + dt/τ · (−r + tanh(relu(g · W r + I)))", { x: 0.75, y: 1.62, w: 4.9, h: 0.5, fontSize: 20, fontFace: "Cambria", objectName: "eq" });
+  const rows = [
+    ["W", "liczby synaps z BANC, znak z przewidywanego neuroprzekaźnika, normalizacja wejść każdego neuronu"],
+    ["τ, dt, g", "20 ms, 5 ms, 0,9 — 4 podkroki na klatkę obrazu"],
+    ["I", "wejście: wzrok (FlyVis → BANC) + żyroskop drona na aferenty halter"],
+    ["GPU", "macierz rzadka CSR w torch: ~2,6 ms na klatkę (RTX 4060)"],
+  ];
+  rows.forEach(([k, v], i) => {
+    text(s, k, { x: 0.5, y: 2.85 + i * 0.5, w: 1.1, h: 0.4, fontSize: 14, bold: true, color: T.accent1, objectName: `k-${i}` });
+    text(s, v, { x: 1.65, y: 2.85 + i * 0.5, w: 4.2, h: 0.45, fontSize: 12, color: T.lt1, objectName: `v-${i}` });
+  });
+  card(s, 6.2, 1.3, 3.3, 3.45, "sign-card");
+  text(s, "Znaki synaps", { x: 6.45, y: 1.5, w: 2.8, h: 0.35, fontSize: 15, bold: true, objectName: "sign-title" });
+  tag(s, 6.45, 2.0, "ACh — pobudzenie", T.accent1, "sg-ach");
+  tag(s, 6.45, 2.35, "GABA — hamowanie", T.accent3, "sg-gaba");
+  tag(s, 6.45, 2.7, "glutaminian — hamowanie", T.accent3, "sg-glu");
+  tag(s, 6.45, 3.05, "histamina — hamowanie", T.accent3, "sg-his");
+  text(s, "Model dynamiki i znaki to nasze założenia; połączenia i liczby synaps są z BANC.", {
+    x: 6.45, y: 3.55, w: 2.85, h: 0.9, fontSize: 11, color: T.lt2, objectName: "sign-note",
+  });
+}
+
+// 7. Obwód lotu
+{
+  const s = content("Obwód lotu: tylko oficjalne adnotacje BANC", "Connectome");
+  s.addImage({ path: A("circuit_3d.jpg"), x: 0.4, y: 1.05, w: 3.35, h: 4.07, objectName: "render-circuit" });
+  const groups = [
+    ["DN flight power", "235", T.accent2, "super_cluster: flight power"],
+    ["DN flight steering", "140", T.accent2, "super_cluster: flight steering"],
+    ["MN wing power", "24", T.accent3, "DLM / DVM — mięśnie mocy"],
+    ["MN wing steering", "24", T.accent3, "b1, i1, iii3… — mięśnie sterujące"],
+    ["MN wing tension", "12", T.accent3, "napięcie skrzydła"],
+    ["Aferenty halter", "428", T.accent4, "czujniki obrotu → żyroskop drona"],
+  ];
+  groups.forEach(([n, c, col, d], i) => {
+    const y = 1.3 + i * 0.6;
+    s.addShape(pres.shapes.OVAL, { x: 4.3, y: y + 0.1, w: 0.14, h: 0.14, fill: { color: col }, line: { color: col, width: 0 }, objectName: `g-${i}-dot` });
+    text(s, n, { x: 4.6, y, w: 2.4, h: 0.32, fontSize: 14, bold: true, objectName: `g-${i}-name` });
+    text(s, d, { x: 4.6, y: y + 0.3, w: 3.6, h: 0.26, fontSize: 11, color: T.lt2, objectName: `g-${i}-desc` });
+    text(s, c, { x: 8.4, y, w: 1.1, h: 0.32, fontSize: 16, bold: true, align: "right", objectName: `g-${i}-count` });
+  });
+}
+
+// 8. Odczyt: DN niosą stronę celu
+pres.addSection({ title: "Odczyt" });
+{
+  const s = content("Strona celu jest w pojedynczych DN, nie w średnich", "Odczyt");
+  s.addChart(pres.charts.BAR, [{ name: "Trafność strony celu", labels: ["6 średnich MN", "MN pojedynczo", "wzrok (VPN)", "DN lotu pojedynczo"], values: [68, 84, 94, 99] }], {
+    x: 0.5, y: 1.2, w: 5.6, h: 3.6, barDir: "bar",
+    chartColors: [T.accent5, T.accent5, T.accent5, T.accent1],
+    showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: '0"%"', dataLabelColor: T.lt1, dataLabelFontSize: 12, dataLabelFontFace: "+mn-lt",
+    catAxisLabelColor: T.lt2, catAxisLabelFontSize: 12, catAxisLabelFontFace: "+mn-lt",
+    valAxisHidden: true, valAxisMaxVal: 110, valAxisMinVal: 0,
+    valGridLine: { style: "none" }, catGridLine: { style: "none" }, catAxisLineShow: false,
+    showLegend: false, showTitle: false, objectName: "chart-side",
+  });
+  stat(s, 6.6, 1.35, 3, "99%", "trafność strony celu z 375 pojedynczych DN lotu (walidacja: nieznana odległość)", T.accent1, "s-dn");
+  stat(s, 6.6, 2.85, 3, "68%", "z 6 średnich grup MN — uśrednianie kasuje różnicę lewo / prawo", T.lt2, "s-mn");
+  s.addNotes("Regresja grzbietowa kąt ~ aktywność, cel pod kątami −90…+90° w 3 odległościach, walidacja na odległości " +
+    "pominiętej w uczeniu (scripts/check_side_decoding.py).");
+}
+
+// 9. Ograniczenie danych
+{
+  const s = content("Ograniczenie v888: asymetria płatów wzrokowych", "Odczyt");
+  card(s, 0.5, 1.3, 4.3, 2.9, "left-card");
+  card(s, 5.2, 1.3, 4.3, 2.9, "right-card");
+  stat(s, 0.85, 1.55, 3.7, "36%", "neuronów lewego płata ma typ komórki", T.lt1, "s-l");
+  stat(s, 0.85, 2.85, 3.7, "5 535", "neuronów zasila lewe oko", T.lt2, "s-l2");
+  stat(s, 5.55, 1.55, 3.7, "80%", "neuronów prawego płata ma typ komórki", T.accent1, "s-r");
+  stat(s, 5.55, 2.85, 3.7, "16 927", "neuronów zasila prawe oko", T.accent1, "s-r2");
+  text(s, "Mapa FlyVis → BANC idzie po typach komórek, więc lewe oko dociera do ~3× mniej neuronów. Wyrównanie wejścia nie zmieniło " +
+    "wyniku; odczyt z pojedynczych DN i tak rozpoznaje obie strony.", { x: 0.5, y: 4.35, w: 9, h: 0.6, fontSize: 12, color: T.lt2, objectName: "note" });
+}
+
+// 10. Symulator
+pres.addSection({ title: "Symulator" });
+{
+  const s = content("Symulator: dron X2 w MuJoCo", "Symulator");
+  s.addImage({ path: A("drone_chase.jpg"), x: 0.5, y: 1.25, w: 4.3, h: 3.22, shadow: shadow(), objectName: "img-drone" });
+  s.addImage({ path: A("world.jpg"), x: 5.2, y: 1.25, w: 4.3, h: 3.22, shadow: shadow(), objectName: "img-world" });
+  text(s, "Skydio X2 (MuJoCo Menagerie) z oczami na nosie · zawis i obrót na płaskiej scenie", { x: 0.5, y: 4.55, w: 4.3, h: 0.45, fontSize: 11, color: T.lt2, objectName: "cap-1" });
+  text(s, "Losowy teren 60 × 60 m, bloki, cel z masztem · tryb angle: symulator utrzymuje zadany przechył", { x: 5.2, y: 4.55, w: 4.3, h: 0.45, fontSize: 11, color: T.lt2, objectName: "cap-2" });
+}
+
+// 11. Trening
+pres.addSection({ title: "Trening" });
+{
+  const s = content("Trening: uczy się tylko dekoder, BANC się nie zmienia", "Trening");
+  const steps = [
+    ["Nauczyciel", "zna prawdziwy stan: kąt do celu, wysokość, prędkość"],
+    ["Lot mieszany", "z prawdopodobieństwem β steruje nauczyciel, β: 1 → 0"],
+    ["Dane", "pary (cechy, komenda nauczyciela); trudne próbki ×3–7"],
+    ["Regresja", "wagi od nowa na wszystkich danych (DAgger + ridge)"],
+  ];
+  steps.forEach(([h, d], i) => {
+    const y = 1.3 + i * 0.86;
+    card(s, 0.5, y, 4.9, 0.72, `t-${i}`);
+    text(s, String(i + 1), { x: 0.72, y: y + 0.16, w: 0.4, h: 0.4, fontSize: 20, bold: true, color: T.accent1, objectName: `t-${i}-n` });
+    text(s, h, { x: 1.2, y: y + 0.1, w: 4, h: 0.3, fontSize: 14, bold: true, objectName: `t-${i}-h` });
+    text(s, d, { x: 1.2, y: y + 0.39, w: 4.1, h: 0.3, fontSize: 11, color: T.lt2, objectName: `t-${i}-d` });
+  });
+  card(s, 5.8, 1.3, 3.7, 1.55, "split");
+  text(s, "Podział osi", { x: 6.05, y: 1.45, w: 3.2, h: 0.3, fontSize: 14, bold: true, objectName: "split-h" });
+  tag(s, 6.05, 1.85, "yaw ← tylko BANC (DN)", T.accent2, "sp-yaw");
+  tag(s, 6.05, 2.2, "thrust/roll/pitch ← BANC + czujniki", T.accent4, "sp-ctl");
+  card(s, 5.8, 3.05, 3.7, 1.6, "dist");
+  text(s, "2 GPU w LAN", { x: 6.05, y: 3.2, w: 3.2, h: 0.3, fontSize: 14, bold: true, objectName: "dist-h" });
+  text(s, "Master rozdaje światy, workerzy (RTX 4060, RTX 3070 Ti) liczą epizody i odsyłają tylko statystyki XᵀX, Xᵀy — " +
+    "bez klatek wideo.", { x: 6.05, y: 3.55, w: 3.25, h: 1.0, fontSize: 11, color: T.lt2, objectName: "dist-d" });
+}
+
+// 12. Wyniki: zawis i skręt
+pres.addSection({ title: "Wyniki" });
+{
+  const s = content("Wynik: skręt do celu z BANC", "Wyniki");
+  const labels = ["cel −60°", "cel −30°", "cel +30°", "cel +60°"];
+  s.addChart(pres.charts.BAR, [
+    { name: "przed treningiem", labels, values: ["-60", "-30", "+30", "+60"].map((k) => +DATA.before[k].toFixed(1)) },
+    { name: "po treningu", labels, values: ["-60", "-30", "+30", "+60"].map((k) => +DATA.after[k].toFixed(1)) },
+  ], {
+    x: 0.5, y: 1.2, w: 5.8, h: 3.7, barDir: "col", barGapWidthPct: 60,
+    chartColors: [T.accent5, T.accent1],
+    showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: '0.0"°"', dataLabelColor: T.lt1, dataLabelFontSize: 11, dataLabelFontFace: "+mn-lt",
+    catAxisLabelColor: T.lt2, catAxisLabelFontSize: 12, catAxisLabelFontFace: "+mn-lt",
+    valAxisHidden: true, valGridLine: { style: "none" }, catGridLine: { style: "none" },
+    showLegend: true, legendPos: "t", legendColor: T.lt2, legendFontSize: 11, legendFontFace: "+mn-lt",
+    showTitle: false, objectName: "chart-eval",
+  });
+  stat(s, 6.8, 1.35, 2.8, "2,65°", "średni końcowy błąd kursu bez nauczyciela (przed treningiem 25,1°)", T.accent1, "s-err");
+  stat(s, 6.8, 2.75, 2.8, "1000", "epizodów na 2 GPU: 672 + 328", T.lt1, "s-ep");
+  text(s, "Zawis na płaskiej scenie, wysokość trzyma symulator. Kierunek: wyłącznie pojedyncze DN z BANC.", {
+    x: 6.8, y: 4.05, w: 2.8, h: 0.8, fontSize: 11, color: T.lt2, objectName: "s-note",
+  });
+}
+
+// 13. Wyniki: lot w świecie (w toku)
+{
+  const s = content("Lot do celu w świecie: w toku", "Wyniki");
+  card(s, 0.5, 1.3, 2.85, 1.75, "c-teacher");
+  card(s, 3.58, 1.3, 2.85, 1.75, "c-before");
+  card(s, 6.65, 1.3, 2.85, 1.75, "c-model");
+  stat(s, 0.8, 1.55, 2.4, "6 / 6", "nauczyciel dolatuje do celu — jest od kogo się uczyć", T.lt1, "w-t");
+  stat(s, 3.88, 1.55, 2.4, "18,1 m", "przed treningiem: średnio najbliżej celu", T.lt2, "w-b");
+  stat(s, 6.95, 1.55, 2.4, "9,0 m", "po 192 epizodach: 2× bliżej, 0 wywrotek, cel 0 / 6", T.accent1, "w-m");
+  text(s, "Uczciwie: model leci stabilnie i zbliża się do celu, ale jeszcze nie ląduje na polu. Kolejny trening: walidacja co 50 " +
+    "epizodów z zapisem najlepszych wag i doważenie trudnych próbek.", { x: 0.5, y: 3.35, w: 9, h: 0.8, fontSize: 13, color: T.lt2, objectName: "w-note" });
+}
+
+// 14. Z BANC vs nasze założenia
+pres.addSection({ title: "Uczciwość" });
+{
+  const s = content("Co jest z BANC, a co jest naszym założeniem", "Uczciwość");
+  card(s, 0.5, 1.3, 4.3, 2.75, "bank");
+  card(s, 5.2, 1.3, 4.3, 2.75, "ours");
+  tag(s, 0.8, 1.5, "z BANC v888", T.accent1, "h-banc");
+  tag(s, 5.5, 1.5, "nasze założenia", T.accent2, "h-ours");
+  const banc = ["neurony, połączenia, liczby synaps", "przewidywany neuroprzekaźnik", "grupy lotu z oficjalnych adnotacji", "pozycje som i szkielety SWC"];
+  const ours = ["model dynamiki i parametry", "znaki neuroprzekaźników", "mapa FlyVis → BANC po typach komórek", "liniowy dekoder i podział osi", "czujniki drona dla thrust/roll/pitch"];
+  text(s, banc.map((t, i) => ({ text: t, options: { bullet: true, breakLine: i < banc.length - 1 } })), {
+    x: 0.8, y: 2.0, w: 3.8, h: 2.6, fontSize: 14, paraSpaceAfter: 6, objectName: "list-banc",
+  });
+  text(s, ours.map((t, i) => ({ text: t, options: { bullet: true, breakLine: i < ours.length - 1 } })), {
+    x: 5.5, y: 2.0, w: 3.8, h: 2.6, fontSize: 14, paraSpaceAfter: 6, objectName: "list-ours",
+  });
+}
+
+// 15. Zakończenie
+pres.addSection({ title: "Koniec" });
+{
+  const s = pres.addSlide({ masterName: "TITLE", sectionTitle: "Koniec" });
+  s.addImage({ path: A("connectome_wide.jpg"), x: 4.1, y: 0.75, w: 5.9, h: 2.95, transparency: 35, objectName: "render-bg" });
+  s.addImage({ path: A("logo.png"), x: 0.6, y: 1.35, w: 1.0, h: 0.59, objectName: "logo" });
+  text(s, "Dziękujemy", { x: 0.6, y: 2.1, w: 5, h: 0.8, fontSize: 44, bold: true, objectName: "thanks" });
+  text(s, "Demo: lot z panelem BANC na żywo\ni eksplorator 3D connectomu", { x: 0.6, y: 2.95, w: 3.5, h: 0.75, fontSize: 16, color: T.lt2, objectName: "demo" });
+  text(s, "github.com/FalconDevX/neurofly", { x: 0.6, y: 4.55, w: 6, h: 0.35, fontSize: 12, color: T.accent1, objectName: "repo" });
+}
 
 (async () => {
-  const I = {
-    flyW: await icon(gi.GiFly, H.lt1),
-    camW: await icon(fa.FaCamera, H.lt1),
-    eyeW: await icon(fa.FaEye, H.lt1),
-    brainW: await icon(fa.FaBrain, H.lt1),
-    wingW: await icon(fa.FaWaveSquare, H.lt1),
-    droneW: await icon(gi.GiDeliveryDrone, H.lt1),
-    droneD: await icon(gi.GiDeliveryDrone, H.dk1),
-    slidersW: await icon(fa.FaSliders, H.lt1),
-    targetW: await icon(fa.FaCrosshairs, H.lt1),
-    branchW: await icon(fa.FaCodeBranch, H.lt1),
-    clockW: await icon(fa.FaClock, H.lt1),
-    gaugeW: await icon(fa.FaGaugeHigh, H.lt1),
-    warnW: await icon(fa.FaTriangleExclamation, H.lt1),
-    netW: await icon(fa.FaNetworkWired, H.lt1),
-    playW: await icon(fa.FaPlay, H.dk1),
-  };
-
-  // ================= 1. Tytuł =================
-  pres.addSection({ title: "Wstęp" });
-  let s = pres.addSlide({ masterName: "DARK", sectionTitle: "Wstęp" });
-  T(s, "NeuroFly");
-  s.addText("Connectome muszki owocowej pilotuje drona", { placeholder: "body" });
-  txt(s, "Hackathon, zespół 3 osób", { x: 0.6, y: 4.6, w: 5, h: 0.35, fontSize: 14, color: C.accent6 });
-  // plaster omatidiów
-  {
-    const d = 0.78, hh = d * 0.88, dx = d * 0.76, dy = hh;
-    const red = new Set(["2,1", "3,2", "1,3", "4,1", "3,0"]);
-    for (let c = 0; c < 5; c++) {
-      for (let r = 0; r < 5; r++) {
-        const x = 6.0 + c * dx;
-        const y = 0.35 + r * dy + (c % 2 ? hh / 2 : 0);
-        if (y + hh > 5.35) continue;
-        const key = `${c},${r}`;
-        const center = key === "2,2";
-        const fill = center ? H.accent1 : red.has(key) ? "7A1A22" : "3E3122";
-        s.addShape(pres.shapes.HEXAGON, { x, y, w: d - 0.06, h: hh - 0.05, fill: { color: fill }, line: { type: "none" }, objectName: `omatidium ${key}` });
-        if (center) s.addImage({ data: I.flyW, x: x + 0.16, y: y + 0.12, w: 0.44, h: 0.44, objectName: "muszka" });
-      }
-    }
-  }
-  s.addNotes("NeuroFly: bierzemy prawdziwy connectome muszki owocowej (BANC) i każemy mu sterować symulowanym dronem. Obraz z kamery drona trafia do modelu wzroku muszki, sygnał płynie przez jej mózg i rdzeń do motoneuronów skrzydeł, a stamtąd do silników drona.");
-
-  // ================= 2. Pętla =================
-  s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Wstęp" });
-  T(s, "Jedna zamknięta pętla: od piksela do śmigła");
-  {
-    const steps = [
-      [I.camW, "Kamera RGB", "obraz z drona w Gazebo", H.dk2],
-      [I.eyeW, "Retina + FlyVis", "model oka i płatów wzrokowych", H.dk2],
-      [I.brainW, "Connectome BANC", "mózg + VNC, dynamika rate", H.accent1],
-      [I.wingW, "Motoneurony skrzydeł", "6 grup → 4 komendy lotu", H.dk2],
-      [I.droneW, "Dron w Gazebo", "fizyka, IMU, nowa klatka", H.dk2],
-    ];
-    const w = 1.62, gap = 0.22, x0 = 0.5, d = 0.95;
-    steps.forEach(([img, head, sub, fill], i) => {
-      const x = x0 + i * (w + gap);
-      hexIcon(s, img, x + (w - d) / 2, 1.7, d, fill, `krok ${i + 1}`);
-      txt(s, head, { x, y: 2.65, w, h: 0.55, fontSize: 15, bold: true, align: "center", valign: "top" });
-      txt(s, sub, { x, y: 3.42, w, h: 0.5, fontSize: 12, color: C.text2, align: "center" });
-      if (i < steps.length - 1)
-        s.addShape(pres.shapes.LINE, { x: x + w - 0.12, y: 2.12, w: gap + 0.24, h: 0, line: { color: H.accent6, width: 1.5, endArrowType: "triangle" }, objectName: `strzałka ${i + 1}` });
-    });
-    // powrót
-    const yb = 4.15;
-    s.addShape(pres.shapes.LINE, { x: 0.5 + 4 * (w + gap) + w / 2, y: 3.9, w: 0, h: yb - 3.9, line: { color: H.accent1, width: 1.5 }, objectName: "powrót 1" });
-    s.addShape(pres.shapes.LINE, { x: 0.5 + w / 2, y: yb, w: 4 * (w + gap), h: 0, line: { color: H.accent1, width: 1.5 }, objectName: "powrót 2" });
-    s.addShape(pres.shapes.LINE, { x: 0.5 + w / 2, y: 3.9, w: 0, h: yb - 3.9, line: { color: H.accent1, width: 1.5, beginArrowType: "triangle" }, objectName: "powrót 3" });
-    txt(s, "lot zmienia to, co widzi kamera, więc pętla domyka się w każdej klatce", { x: 2.0, y: 4.3, w: 6.0, h: 0.35, fontSize: 13, italic: true, color: C.accent1, align: "center" });
-  }
-  s.addNotes("Pętla jest zamknięta: to, jak dron poleci, zmienia następną klatkę z kamery. Nie ma tu ręcznie napisanego autopilota w środku. Decyzje przechodzą przez graf neuronów muszki.");
-
-  // ================= 3. BANC w liczbach =================
-  pres.addSection({ title: "Connectome" });
-  s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Connectome" });
-  T(s, "BANC: cały układ nerwowy w jednym grafie");
-  txt(s, "Mózg i brzuszny łańcuch nerwowy (VNC) w jednym connectome. Droga od oka do skrzydła nie ma przerw, więc możemy ją symulować wprost.", { x: 0.5, y: 1.3, w: 3.3, h: 1.6, fontSize: 16 });
-  txt(s, "Dane: BANC, materializacja 888", { x: 0.5, y: 4.6, w: 3.3, h: 0.3, fontSize: 11, color: C.text2 });
-  {
-    const stats = [
-      ["188 508", "neuronów", "z czego 805 to motoneurony"],
-      ["35,7 mln", "synaps", "zliczonych w krawędziach grafu"],
-      ["1,6 mln", "silnych połączeń", "≥ 5 synaps, z 11,75 mln wszystkich"],
-    ];
-    stats.forEach(([big, label, sub], i) => {
-      const y = 1.2 + i * 1.25;
-      s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 4.3, y, w: 5.2, h: 1.08, rectRadius: 0.08, fill: { color: H.lt2 }, line: { type: "none" }, objectName: `stat ${i + 1} tło` });
-      txt(s, big, { x: 4.5, y: y + 0.1, w: 2.5, h: 0.88, fontFace: THEME.headFontFace, fontSize: 36, bold: true, color: i === 0 ? C.accent1 : C.text1, valign: "middle" });
-      txt(s, label, { x: 7.05, y: y + 0.17, w: 2.3, h: 0.36, fontSize: 16, bold: true, valign: "middle" });
-      txt(s, sub, { x: 7.05, y: y + 0.53, w: 2.3, h: 0.45, fontSize: 11, color: C.text2 });
-    });
-  }
-  s.addNotes("Liczby pochodzą prosto z plików BANC 888, które mamy w repo. Do symulacji odcinamy słabe połączenia: zostawiamy krawędzie z co najmniej 5 synapsami, czyli około 1,6 miliona.");
-
-  // ================= 4. Lejek =================
-  s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Connectome" });
-  T(s, "Od oka do skrzydła: 62 neurony na końcu");
-  s.addChart(pres.charts.BAR, [{
-    name: "Neurony",
-    labels: ["Płaty wzrokowe", "Projekcje wzrokowe", "Mózg centralny", "Neurony zstępujące (DN)", "VNC", "Motoneurony skrzydeł"],
-    values: [72947, 7316, 31879, 1316, 12866, 62],
-  }], {
-    x: 0.4, y: 1.15, w: 5.9, h: 3.9, barDir: "bar", catAxisOrientation: "maxMin",
-    chartColors: [H.dk2], showValue: true, dataLabelPosition: "outEnd", dataLabelFormatCode: "# ##0",
-    dataLabelColor: H.dk1, dataLabelFontSize: 11, dataLabelFontFace: "+mn-lt",
-    catAxisLabelColor: H.dk1, catAxisLabelFontSize: 12, catAxisLabelFontFace: "+mn-lt",
-    valAxisHidden: true, valGridLine: { style: "none" }, catGridLine: { style: "none" },
-    catAxisLineShow: false, showLegend: false, showTitle: false, barGapWidthPct: 45,
-  });
-  {
-    const items = [
-      ["24", "power", "amplituda uderzenia, czyli ciąg"],
-      ["24", "steering", "płaszczyzna uderzenia, czyli kierunek"],
-      ["12", "tension", "napięcie mięśni skrzydła"],
-    ];
-    txt(s, "Wszystko, co muszka widzi, kończy się na 62 motoneuronach skrzydeł:", { x: 6.6, y: 1.25, w: 2.9, h: 0.8, fontSize: 14 });
-    items.forEach(([n, k, d], i) => {
-      const y = 2.15 + i * 0.85;
-      txt(s, n, { x: 6.6, y, w: 0.75, h: 0.6, fontFace: THEME.headFontFace, fontSize: 30, bold: true, color: C.accent1, valign: "middle" });
-      txt(s, k, { x: 7.4, y: y + 0.02, w: 2.1, h: 0.3, fontSize: 14, bold: true });
-      txt(s, d, { x: 7.4, y: y + 0.3, w: 2.1, h: 0.4, fontSize: 11, color: C.text2 });
-    });
-  }
-  s.addNotes("Słupki idą w kolejności przepływu sygnału. Dziesiątki tysięcy neuronów wzrokowych, potem około 1300 neuronów zstępujących, które łączą mózg z VNC, a na końcu tylko 62 motoneurony skrzydeł. Z tych 62 odczytujemy sterowanie.");
-
-  // ================= 5. Zespół =================
-  pres.addSection({ title: "Architektura" });
-  s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Architektura" });
-  T(s, "Trzy osoby, trzy moduły, dwa kontrakty");
-  {
-    const cols = [
-      [I.eyeW, "Osoba 1", "Wzrok", "Kamera RGB → FlyGym Retina → RetinaMapper → FlyVis → aktywność neuronów BANC"],
-      [I.brainW, "Osoba 2", "Sterowanie", "BANC/VNC → motoneurony skrzydeł → thrust, roll, pitch, yaw (banc_control/)"],
-      [I.droneW, "Osoba 3", "Symulacja", "Gazebo Sim, quadcopter z kamerą i IMU, epizody treningowe"],
-    ];
-    const w = 2.6, gap = 0.6;
-    cols.forEach(([img, who, role, body], i) => {
-      const x = 0.5 + i * (w + gap);
-      s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: 1.25, w, h: 2.45, rectRadius: 0.08, fill: { color: H.lt2 }, line: { type: "none" }, objectName: `${who} karta` });
-      hexIcon(s, img, x + 0.25, 1.45, 0.72, i === 1 ? H.accent1 : H.dk2, who);
-      txt(s, who, { x: x + 1.12, y: 1.5, w: 1.35, h: 0.28, fontSize: 12, color: C.text2 });
-      txt(s, role, { x: x + 1.12, y: 1.78, w: 1.4, h: 0.38, fontSize: 18, bold: true });
-      txt(s, body, { x: x + 0.25, y: 2.4, w: w - 0.5, h: 1.2, fontSize: 13 });
-    });
-    const contracts = [
-      ["JSON z aktywnością", "banc_root_id, cell_type, activity"],
-      ["FlightCommand ↔ IMU", "komenda lotu w jedną stronę, żyroskop w drugą"],
-    ];
-    contracts.forEach(([h, d], i) => {
-      const cx = 0.5 + (i + 1) * w + i * gap + gap / 2;
-      s.addShape(pres.shapes.LINE, { x: cx - 0.22, y: 2.5, w: 0.44, h: 0, line: { color: H.accent2, width: 2, beginArrowType: "triangle", endArrowType: "triangle" }, objectName: `kontrakt ${i + 1} strzałka` });
-      s.addShape(pres.shapes.LINE, { x: cx, y: 2.62, w: 0, h: 1.18, line: { color: H.accent2, width: 1 }, objectName: `kontrakt ${i + 1} linia` });
-      txt(s, h, { x: cx - 1.3, y: 3.9, w: 2.6, h: 0.3, fontSize: 13, bold: true, color: C.accent3, align: "center" });
-      txt(s, d, { x: cx - 1.3, y: 4.2, w: 2.6, h: 0.5, fontSize: 11, color: C.text2, align: "center" });
-    });
-  }
-  s.addNotes("Podział jest czysty: każda osoba ma swój moduł i komunikuje się z sąsiadem przez jeden kontrakt danych. Dzięki stubom (FakeVision, ToyDrone) każdy moduł da się testować samodzielnie, zanim połączymy całość.");
-
-  // ================= 6. Mapowanie =================
-  s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Architektura" });
-  T(s, "Skrzydła muszki jako komendy quadcoptera");
-  {
-    const rows = [
-      ["thrust", "średnia amplituda uderzenia obu skrzydeł"],
-      ["roll", "asymetria amplitudy lewe − prawe"],
-      ["pitch", "przesunięcie płaszczyzny uderzenia przód − tył"],
-      ["yaw", "przeciwne przesunięcie płaszczyzny na L i P"],
-    ];
-    rows.forEach(([k, d], i) => {
-      const y = 1.3 + i * 0.88;
-      s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 0.5, y, w: 5.6, h: 0.72, rectRadius: 0.06, fill: { color: H.lt2 }, line: { type: "none" }, objectName: `${k} tło` });
-      txt(s, k, { x: 0.75, y, w: 1.2, h: 0.72, fontFace: THEME.headFontFace, fontSize: 22, bold: true, color: C.accent1, valign: "middle" });
-      txt(s, d, { x: 2.0, y, w: 3.95, h: 0.72, fontSize: 14, valign: "middle" });
-    });
-    // panel halter
-    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x: 6.5, y: 1.3, w: 3.0, h: 3.36, rectRadius: 0.08, fill: { color: H.dk1 }, line: { type: "none" }, objectName: "panel halter" });
-    hexIcon(s, I.gaugeW, 6.75, 1.55, 0.7, H.accent1, "halter");
-    txt(s, "Halter = IMU", { x: 6.75, y: 2.35, w: 2.5, h: 0.4, fontSize: 18, bold: true, color: C.background1 });
-    txt(s, "Muszka czuje obroty narządami zwanymi halterami. Żyroskop drona podajemy jako ich aferenty w VNC, więc stabilizacja też przechodzi przez connectome.", { x: 6.75, y: 2.8, w: 2.55, h: 1.75, fontSize: 13, color: C.background1 });
-  }
-  s.addNotes("To mapowanie jest umowne, ale oparte na tym, jak muszka naprawdę steruje lotem: amplituda daje siłę, asymetria daje przechył, a przesunięcie płaszczyzny uderzenia daje pochylenie i obrót. Haltery to biologiczny żyroskop, a IMU drona wchodzi dokładnie w to miejsce.");
-
-  // ================= 7. Plany dekodera =================
-  s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Architektura" });
-  T(s, "Trzy dekodery, a demo jest zawsze");
-  {
-    const plans = [
-      [I.targetW, "Plan A", "Adaptive", "Uczenie z nagrody: stabilny zawis i kierunek na beacon. Perturbacja wag dekodera.", H.accent1],
-      [I.branchW, "Plan B", "Linear", "Mała warstwa liniowa uczona regułą LMS. Szybka i przewidywalna.", H.dk2],
-      [I.slidersW, "Plan C", "Manual", "Ręcznie skalibrowane wzmocnienia, zero uczenia. Gwarantowane demo.", H.dk2],
-    ];
-    const w = 2.8, gap = 0.3;
-    plans.forEach(([img, p, name, body, fill], i) => {
-      const x = 0.5 + i * (w + gap);
-      s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: 1.25, w, h: 2.2, rectRadius: 0.08, fill: { color: H.lt2 }, line: { type: "none" }, objectName: `${p} karta` });
-      hexIcon(s, img, x + 0.25, 1.45, 0.72, fill, p);
-      txt(s, p, { x: x + 1.12, y: 1.5, w: 1.5, h: 0.28, fontSize: 12, color: C.text2 });
-      txt(s, name, { x: x + 1.12, y: 1.78, w: 1.55, h: 0.38, fontSize: 18, bold: true });
-      txt(s, body, { x: x + 0.25, y: 2.4, w: w - 0.5, h: 0.95, fontSize: 13 });
-    });
-    txt(s, "Connectome zostaje nietknięty. Uczy się wyłącznie dekoder na wyjściu z motoneuronów.", { x: 0.5, y: 3.8, w: 9.0, h: 0.5, fontSize: 15, italic: true, color: C.accent1 });
-  }
-  s.addNotes("Mamy trzy poziomy ambicji. Plan A uczy się z nagrody, Plan B to prosta regresja, Plan C to ręczne strojenie, które działa zawsze. Ważne: nie zmieniamy wag w connectome. Cała plastyczność jest w małym dekoderze, więc zachowanie wynika z prawdziwej sieci muszki.");
-
-  // ================= 8. Harmonogram =================
-  pres.addSection({ title: "Realizacja" });
-  s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Realizacja" });
-  T(s, "12 godzin: najpierw pętla, potem uczenie");
-  {
-    const phases = [
-      [0, 4, "Moduły równolegle", "dane BANC, grupy neuronów, Plan C"],
-      [4, 6, "Pełna pętla", "stuby → prawdziwy FlyVis i Gazebo"],
-      [6, 9, "Plan A", "uczenie z nagrody"],
-      [9, 10, "Fallback", "Plan B lub C"],
-      [10, 12, "Demo", "nagranie, logi, wizualizacja"],
-    ];
-    const x0 = 0.5, W = 9.0, u = W / 12, y = 2.0;
-    phases.forEach(([a, b, h, d], i) => {
-      const x = x0 + a * u, w = (b - a) * u;
-      const fill = i === 4 ? H.accent1 : i % 2 ? H.accent2 : H.dk2;
-      s.addShape(pres.shapes.RECTANGLE, { x: x + 0.03, y, w: w - 0.06, h: 0.5, fill: { color: fill }, line: { type: "none" }, objectName: `faza ${i + 1}` });
-      txt(s, `${a}–${b} h`, { x, y: y - 0.4, w, h: 0.3, fontSize: 12, color: C.text2, align: "center" });
-      const tw = Math.max(w, 1.5), tx = Math.min(Math.max(x + w / 2 - tw / 2, x0), x0 + W - tw);
-      const ty = i % 2 ? 3.55 : 2.7;
-      txt(s, h, { x: tx, y: ty, w: tw, h: 0.32, fontSize: 14, bold: true, align: "center" });
-      txt(s, d, { x: tx, y: ty + 0.32, w: tw, h: 0.5, fontSize: 11, color: C.text2, align: "center" });
-      s.addShape(pres.shapes.LINE, { x: x + w / 2, y: y + 0.5, w: 0, h: ty - y - 0.55, line: { color: H.accent6, width: 0.75 }, objectName: `faza ${i + 1} łącznik` });
-    });
-  }
-  s.addNotes("Kolejność jest celowa: najpierw cała pętla działa na stubach i Planie C, dopiero potem bierzemy się za uczenie. Jeśli Plan A nie ustabilizuje się do 9. godziny, przechodzimy na B albo C i spokojnie przygotowujemy demo.");
-
-  // ================= 9. Ryzyka =================
-  s = pres.addSlide({ masterName: "CONTENT", sectionTitle: "Realizacja" });
-  T(s, "Ryzyka znamy i każde ma plan awaryjny");
-  {
-    const risks = [
-      ["Różne wersje root ID", "Jedna materializacja BANC dla Osoby 1 i 2. Logujemy unmatched_ids."],
-      ["Które neurony sterują lotem?", "Grupy bierzemy z adnotacji BANC (power, steering), nie zgadujemy nazw."],
-      ["Czas kroku symulacji", "Mierzymy na pełnym grafie, w razie potrzeby tniemy do podgrafu wzrok → DN → VNC."],
-      ["Mapowanie jest umowne", "Plan C musi latać, zanim zaczniemy cokolwiek uczyć."],
-    ];
-    risks.forEach(([h, d], i) => {
-      const x = 0.5 + (i % 2) * 4.6, y = 1.25 + Math.floor(i / 2) * 1.85;
-      s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y, w: 4.4, h: 1.65, rectRadius: 0.08, fill: { color: H.lt2 }, line: { type: "none" }, objectName: `ryzyko ${i + 1} tło` });
-      hexIcon(s, I.warnW, x + 0.22, y + 0.25, 0.62, H.accent1, `ryzyko ${i + 1}`);
-      txt(s, h, { x: x + 1.05, y: y + 0.22, w: 3.15, h: 0.4, fontSize: 16, bold: true, valign: "middle" });
-      txt(s, d, { x: x + 1.05, y: y + 0.66, w: 3.15, h: 0.85, fontSize: 13, color: C.text2 });
-    });
-  }
-  s.addNotes("Największe ryzyko to niezgodne identyfikatory neuronów między modułami, bo root ID zmieniają się po proofreadingu. Dlatego wszyscy pracujemy na jednej wersji BANC i liczymy, ile neuronów się nie dopasowało.");
-
-  // ================= 10. Demo =================
-  s = pres.addSlide({ masterName: "DARK", sectionTitle: "Realizacja" });
-  T(s, "Demo");
-  s.addText("Zawis i lot do beacona, sterowane przez connectome muszki", { placeholder: "body" });
-  {
-    const items = ["Nagranie zawisu i lotu do beacona", "Logi aktywności motoneuronów na żywo", "Wizualizacja ścieżki w BANC", "Kod: banc_control/ z testami pytest"];
-    items.forEach((t, i) => {
-      const y = 1.3 + i * 0.85;
-      s.addShape(pres.shapes.HEXAGON, { x: 6.3, y, w: 0.5, h: 0.44, fill: { color: i === 0 ? H.accent1 : "3E3122" }, line: { type: "none" }, objectName: `punkt ${i + 1}` });
-      txt(s, t, { x: 7.0, y: y - 0.05, w: 2.6, h: 0.6, fontSize: 14, color: C.background1, valign: "middle" });
-    });
-  }
-  s.addNotes("Na koniec pokazujemy nagranie: dron zawisa i leci do beacona, a obok widać na żywo aktywność motoneuronów skrzydeł, które tym sterują.");
-
   await pres.writeFile({ fileName: OUT });
-  await applyTheme(OUT, THEME);
-  console.log("ok", OUT);
+  const applyThemePath = process.env.APPLY_THEME;
+  if (applyThemePath) {
+    const { applyTheme } = require(applyThemePath);
+    await applyTheme(OUT, THEME);
+  }
+  console.log("zapisano", OUT);
 })();
