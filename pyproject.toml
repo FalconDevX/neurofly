@@ -1,0 +1,16 @@
+[project]
+name = "neurofly"
+version = "0.1.0"
+description = "Drosophila connectome (FlyVis → BANC/VNC) sterujący symulowanym dronem — hackathon"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "pandas"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+packages = ["banc_control"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
