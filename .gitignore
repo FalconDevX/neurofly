@@ -9,4 +9,5 @@ third_party/
 
 # generowane przez sim/world.py
 sim/assets/scene_eyes.xml
+sim/assets/common_eyes.xml
 sim/assets/x2/x2_eyes.xml
