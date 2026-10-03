@@ -81,8 +81,15 @@ class RateController:
         self.prev_error = error
         accel = self.kp * error + self.ki * self.integral + self.kd * deriv
         torque = self.inertia @ accel + np.cross(body_rates(data), self.inertia @ body_rates(data))
-        forces = self.mix @ np.concatenate([[cmd.thrust], torque])
-        return np.clip(forces, self.ctrl_lo, self.ctrl_hi)
+        # Priorytet: ciąg i roll/pitch, yaw tylko tyle, ile zmieści się w zakresie silników.
+        # Samo obcięcie sił przy dużym yaw zerowało jedną parę silników i zawyżało ciąg zbiorczy
+        # (yaw ±1 co klatkę → wznoszenie ~2 m/s).
+        base = self.mix @ np.array([cmd.thrust, torque[0], torque[1], 0.0])
+        yaw = self.mix @ np.array([0.0, 0.0, 0.0, torque[2]])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            room = np.where(yaw > 0, (self.ctrl_hi - base) / yaw, (self.ctrl_lo - base) / yaw)
+        scale = float(np.clip(np.nanmin(np.where(yaw != 0, room, np.inf)), 0.0, 1.0))
+        return np.clip(base + scale * yaw, self.ctrl_lo, self.ctrl_hi)
 
     def apply(self, cmd: RateCommand, model, data):
         data.ctrl[:] = self.compute(cmd, data, model.opt.timestep)

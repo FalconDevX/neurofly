@@ -69,6 +69,18 @@ class ManualDecoder:
         thrust, roll, pitch, yaw = self.M @ self.normalized(features)
         return FlightCommand(self.hover_thrust + thrust, roll, self.pitch_trim + pitch, yaw).clipped()
 
+    def save(self, path, **meta) -> None:
+        """Zapisuje wagi (``M``) i trymy; ``baseline``/``scale`` nie — pochodzą z kalibracji sceny."""
+        np.savez(path, M=self.M, hover_thrust=self.hover_thrust, pitch_trim=self.pitch_trim,
+                 meta=np.array(repr(meta)))
+
+    def load_weights(self, path) -> None:
+        """Wczytuje ``M`` i trymy z ``save``. Wywoływać PO kalibracji: ``calibrate_yaw_sign`` odwraca
+        ``M[3]``, a wyuczona macierz ma już znak yaw z kalibracji, przy której była uczona."""
+        d = np.load(path)
+        self.M = d["M"].copy()
+        self.hover_thrust, self.pitch_trim = float(d["hover_thrust"]), float(d["pitch_trim"])
+
 
 class LinearDecoder(ManualDecoder):
     """Plan B. Startuje z wag ręcznych i dostraja je LMS-em do komend docelowych."""
@@ -82,7 +94,9 @@ class LinearDecoder(ManualDecoder):
         pred = self.M @ x
         tgt = np.array([target.thrust - self.hover_thrust, target.roll, target.pitch - self.pitch_trim, target.yaw])
         err = tgt - pred
-        self.M += self.lr * np.outer(err, x)
+        # Znormalizowany LMS: w locie cechy potrafią wyjść daleko poza skalę z kalibracji,
+        # a zwykły LMS przy dużym |x| się rozbiega.
+        self.M += self.lr * np.outer(err, x) / (1.0 + x @ x)
         return float((err ** 2).mean())
 
 

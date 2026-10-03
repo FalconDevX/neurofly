@@ -82,9 +82,34 @@ Sprawdzone: numpy 2.4.6, scipy 1.17.1, matplotlib 3.11.2, mujoco 3.14.0, model S
   `Spacja` pauza; `--seed` odtwarza świat (ziarno jest wypisywane w konsoli).
   Klawisze lotu przechwytuje hook Windows (`sim/keyboard.py`), żeby nie przełączały skrótów podglądu MuJoCo.
 
+## Pętla z BANC: `DroneEnv` (`sim/env.py`)
+
+- `sim/world.py` buduje scenę: X2 z `sim/assets/x2` + oczy Osoby 1 (`drone_eyes.eye_camera_xml`) + cel
+  (ciemny słup na ciele mocap, przestawiany w `reset`). Generowane `scene_eyes.xml` / `x2/x2_eyes.xml` są w `.gitignore`.
+- `DroneEnv.reset(scenario | bearing_deg)` → `(Observation(left, right, imu), info)`;
+  `step(FlightCommand | dict)` → `(obs, reward, terminated, truncated, info)`. Krok = klatka 30 FPS = 5 kroków fizyki
+  (timestep 1/150 s, żeby czas klatki zgadzał się z `fps` FlyVis w serwerze). `info` (kąt do celu, wysokość, pozycja)
+  jest tylko do metryk/nagrody.
+- Oczy renderują bez cieni: mapa cieni reflektora śledzącego drona dawała przy horyzoncie ciemną plamę jeżdżącą
+  razem z dronem (fałszywy ruch dla FlyVis).
+- `Pilot` (nasze założenie): `mode="angle"` (domyślnie, wariant demo Planu C) — symulator trzyma poziom i hamuje dryf
+  (`VelocityController`), BANC daje yaw (±1 → ±1 rad/s) i thrust jako wznoszenie ((thrust − 0,5) · 1 m/s, martwa
+  strefa 0,05), roll/pitch z BANC ignorowane (`use_roll` → ruch w bok). `mode="acro"` — znormalizowane prędkości kątowe.
+- `DroneEnv.calibration_render(bearing)` = `render` dla `VisionClient.calibrate`.
+- Scenariusze `SCENARIOS`: `hover`, `turn_right` / `turn_left` (cel ±60°), `gust` (moment odchylenia + siła boczna
+  w t = 2 s). `summarize(log)` → błąd kursu (końcowy, średni z ostatniej s, czas ustalenia ≤ 10°), wysokość, dryf.
+- Sprawdzone regulatorem P na prawdziwym kącie (zamiast BANC): cel 60° → 0,3° po 3 s, wysokość ±6 cm;
+  podmuch → maks. 16° i powrót. Render obu oczu + fizyka ~3 ms/klatkę.
+
+```bash
+python scripts/vision_server.py                       # .venv312 (wzrok + BANC), osobny terminal
+python scripts/fly_banc.py --video demo.mp4           # środowisko symulatora; wyniki w data/runs/
+python scripts/fly_banc.py --local                    # wszystko w jednym procesie (.venv312)
+python scripts/train_decoder.py --plan B              # trening dekodera (.venv312), wagi → data/decoders/
+python scripts/vision_server.py --decoder data/decoders/planB.npz
+```
+
 ## Dalej
 
-1. Dwie kamery-oczy na modelu X2.
-2. Regulator prędkości kątowych + mixer.
-3. `DroneEnv` (`reset`/`step`), światy: zawis → beacon → korytarz → wiatr → podmuchy.
-4. Most ZMQ do `banc_control` (w miejsce `ToyDrone`).
+1. Korytarz, kilka celów, wiatr ciągły.
+2. Nagranie demo: oczy + aktywność BANC (explorer) + dron.

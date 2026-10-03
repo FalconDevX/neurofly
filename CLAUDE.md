@@ -43,8 +43,11 @@ wizualizację — została odrzucona („pseudo sieć, nie przypomina BANC”) i
 - `controller.py` — `BancController.step(visual, imu)`; kalibracje w kolejności: `calibrate_rest(visual=scena neutralna)`,
   `calibrate_scale(bodźce)`, `calibrate_yaw_sign(turn_right, turn_left)` (znak osi yaw z odruchu optomotorycznego
   na sekwencjach obrotu; odwraca `decoder.M[3]`, `yaw_axis_sign`), `calibrate_haltere_sign()` (osobne znaki
-  `haltere_sign` dla roll_rate i `haltere_yaw_sign` dla yaw_rate). Napęd halter = `haltere_roll_weight`·roll_rate +
+  `haltere_sign` dla roll_rate i `haltere_yaw_sign` dla yaw_rate), `calibrate_haltere_gain()` (`haltere_gain` tak,
+  żeby 1 rad/s dawało surowy yaw 0.5). Napęd halter = `haltere_roll_weight`·roll_rate +
   `haltere_yaw_weight`·yaw_rate, domyślnie **0 i 0.5** (roll nie idzie przez haltery, patrz wyniki).
+  `warm_start(visual)` po resecie (serwer robi to przy `reset`), inaczej pierwsze klatki dawały thrust 0 / yaw ±1.
+  Dekoder: `save(path)` / `load_weights(path)` (po kalibracji), LMS Planu B jest znormalizowany (NLMS).
 - `stubs.py` — `FakeVision` (pobudza `visual_projection` L/R wg kierunku beacona), `ToyDrone` (1-osiowa fizyka).
 - `scripts/export_viz_data.py`, `scripts/export_anatomy.py` — dane do wizualizacji (`data/viz/`).
 
@@ -85,22 +88,34 @@ Nasze założenia (zawsze mów o nich wprost, nie przedstawiaj jako wyników BAN
 - Wydajność (RTX 4060 Laptop): GPU 0.3 ms/podkrok, ~2.6 ms/klatkę (4 podkroki + wejście); CPU ~24 ms/klatkę.
   Wejście wzrokowe jest zwektoryzowane (`Connectome.indices_of`), ~1.4 ms dla 7k rekordów.
 
+## Wyniki w MuJoCo (prawdziwy FlyVis + v888, `fly_banc.py --local`, 2026-10-03)
+
+- Kalibracja na scenach MuJoCo: wzrok zmienia aktywność MN tylko o ~1% spoczynku (`scale` ~1e-7…1e-6 przy
+  `baseline` ~1e-5). Przy stałym `haltere_gain` 0.5 haltery dawały surowy yaw ~6000 na 1 rad/s → yaw ±1 co klatkę,
+  thrust 0. Po `calibrate_haltere_gain` (gain ~7e-5) pętla jest spokojna.
+- `--thrust hold`: zawis błąd < 1°, wysokość stała. Cel +60° → 62°, −60° → 61° po 8 s (brak skrętu do celu;
+  w pętli otwartej cel z lewej yaw −0.39, z prawej −0.06). Podmuch: haltery tłumią obrót, kurs nie wraca (24°).
+- `--thrust banc`: thrust 0.3–0.46 w locie, dron dotyka ziemi po ~4.5 s.
+
 ## Plan domknięcia (ustalony 2026-10-03, idziemy według niego)
 
 Zrobione wcześniej: ID v888 uzgodnione z Osobą 1 (`unmatched_ids = 0`), dynamika na GPU, oczy MuJoCo i most ZMQ (Osoba 1).
 
 **Etap 1 — pętla z MuJoCo działa w ogóle** (ścieżka krytyczna: Osoba 3)
-- [ ] O3: `DroneEnv` (`reset`/`step`) na X2 z oczami z `drone_eyes.py`, regulator prędkości kątowych + mixer
-  `[thrust, roll, pitch, yaw]` → 4 silniki, `pyzmq` w `environment.yml`.
-- [ ] O3: klient ZMQ w `DroneEnv.step()` na wzór `example_sim_client.py`, z `VisionClient.calibrate(render)` po starcie.
+- [x] O3: `DroneEnv` (`sim/env.py`, `sim/world.py`): X2 Osoby 3 + oczy + cel mocap, `Pilot` angle/acro
+  (`thrust_mode` banc/hold), scenariusze `hover`/`turn_right`/`turn_left`/`gust`, `summarize` (metryki).
+  Mixer z desaturacją yaw (wcześniej yaw ±1 zerował parę silników i dron wznosił się ~2 m/s). Opis: `docs/osoba3-plan.md`.
+- [x] O3: `scripts/fly_banc.py` (ZMQ albo `--local` w jednym procesie, `--video`, wyniki `data/runs/`),
+  `LocalClient` w `visual_pipeline/server.py`, kalibracja `DroneEnv.calibration_render`.
 - [x] O1+O2: kalibracja na scenach z symulatora (`calib` w protokole) — naprawia thrust = 0 na scenie MuJoCo.
-  Zrobione na gałęzi `osoba2-sim-calibration`, testowane fałszywym mostem; **niesprawdzone z prawdziwym FlyVis + MuJoCo**.
+  Sprawdzone z prawdziwym FlyVis + MuJoCo (`fly_banc.py --local`).
 
 **Etap 2 — zachowanie**
 - [x] O2: znak yaw z obrotu (`calibrate_yaw_sign`), wpięty w kalibrację serwera (syntetyczną i z symulatora).
 - [x] O2: haltery: osobne znaki roll/yaw, domyślnie tylko yaw_rate.
-- [ ] O2+O3: **wariant demo (Plan C, musi działać zawsze):** symulator trzyma poziom (angle mode), BANC daje yaw + thrust
-  (roll z BANC ignorowany, jak `run_closed_loop.py --yaw-only`).
+- [~] O2+O3: **wariant demo (Plan C):** angle mode działa i jest stabilny, ale z prawdziwym FlyVis **nie skręca do celu**
+  (cel ±60° zostaje ~60°), a thrust z BANC jest stale < 0.5 (dron opada w 4–5 s) → demo na `--thrust hold`.
+  Trening dekodera: `scripts/train_decoder.py --plan B|A` (wyniki niżej).
 - [ ] O1/O2: potwierdzić z FlyVis: `scripts/check_optomotor.py` po kalibracji ma „hamuje obrót”, `run_closed_loop.py` bez ciągłego obrotu.
 
 **Etap 3 — demo i prezentacja**

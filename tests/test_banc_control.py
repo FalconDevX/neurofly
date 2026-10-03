@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from banc_control import BancController, Connectome, ImuState, parse_visual_activity
+from banc_control import BancController, Connectome, FlightCommand, ImuState, parse_visual_activity
 from banc_control.connectome import DEFAULT_DATA_DIR, EDGES_FILE, META_FILE, flight_groups
 from banc_control.stubs import FakeVision, ToyDrone
 
@@ -174,3 +174,36 @@ def test_haltere_yaw_rate_has_own_sign():
     for _ in range(30):
         cmd = ctrl.step([], ImuState(gyro=(0.0, 0.0, 1.5)))
     assert cmd.yaw <= 1e-9  # obrót w prawo nie może dawać komendy w prawo
+
+
+def test_linear_decoder_learns_and_roundtrips(tmp_path):
+    from banc_control.readout import LinearDecoder
+
+    dec = LinearDecoder(lr=0.5)
+    rng = np.random.default_rng(0)
+    true_yaw = np.array([0.0, 0.0, -1.0, 1.0, 0.5, -0.5])  # inna kombinacja niż ręczna
+    losses = []
+    for _ in range(2000):
+        x = rng.normal(size=6)
+        losses.append(dec.fit_step(x, FlightCommand(thrust=0.5, yaw=float(true_yaw @ x))))
+    assert np.mean(losses[-100:]) < 0.01 * np.mean(losses[:100])
+    np.testing.assert_allclose(dec.M[3], true_yaw, atol=0.05)
+
+    dec.save(tmp_path / "w.npz", plan="B")
+    other = LinearDecoder()
+    other.load_weights(tmp_path / "w.npz")
+    np.testing.assert_array_equal(other.M, dec.M)
+
+
+def test_haltere_gain_calibration_hits_target():
+    c = Connectome.from_banc_tables(*mini_banc())
+    ctrl = BancController(c, haltere_gain=50.0)
+    ctrl.calibrate_rest(30)
+    vision = FakeVision(c)
+    ctrl.calibrate_scale([vision(-1.0), vision(1.0)])
+    ctrl.decoder.M[3] = ctrl.decoder.M[1]  # mały graf: haltery → tylko MN mocy, więc yaw = ich asymetria
+    ctrl.calibrate_haltere_sign()
+    ctrl.calibrate_haltere_gain(target=0.3)
+    base = ctrl._raw_command([], None, 30)[3]
+    yaw = ctrl._raw_command([], ImuState(gyro=(0.0, 0.0, 1.0)), 30)[3]
+    assert abs(yaw - base) == pytest.approx(0.3, rel=0.1)
