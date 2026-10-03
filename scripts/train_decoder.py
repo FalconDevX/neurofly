@@ -43,6 +43,26 @@ def teacher(info: dict, start_z: float, k_yaw: float = 1.5, k_z: float = 1.0) ->
                          yaw=float(np.clip(k_yaw * info["bearing"], -1.0, 1.0)))
 
 
+def build(plan: str, lr: float = 0.05, noise: float = 0.1, reward_lr: float = 0.05, thrust: str = "hold"):
+    """DroneEnv + VisionBridge + BancController z dekoderem Planu ``plan``, skalibrowane na scenach
+    MuJoCo dokładnie jak przez ZMQ (te same sceny, ten sam ControlServer). → (env, bridge, ctrl, calib)."""
+    decoder = LinearDecoder(lr=lr) if plan == "B" else AdaptiveDecoder(noise=noise, reward_lr=reward_lr)
+    ctrl = BancController(Connectome.from_banc(), decoder=decoder)
+    bridge = VisionBridge(fps=30, fisheye=True)
+    env = DroneEnv(thrust_mode=thrust)
+    if plan == "A":
+        decoder.noise = 0.0  # kalibracja bez szumu eksploracji
+    calib = LocalClient(ControlServer(bridge, ctrl)).calibrate(env.calibration_render)
+    if plan == "A":
+        decoder.noise = noise
+    return env, bridge, ctrl, calib
+
+
+def beta_schedule(episode: int, total: int, plan: str) -> float:
+    """Udział nauczyciela (DAgger) w Planie B: od 1 do 0 w pierwszej połowie treningu."""
+    return max(0.0, 1.0 - episode / max(1, total // 2)) if plan == "B" else 0.0
+
+
 class Runner:
     def __init__(self, env: DroneEnv, bridge: VisionBridge, ctrl: BancController) -> None:
         self.env, self.bridge, self.ctrl = env, bridge, ctrl
@@ -123,20 +143,10 @@ def main() -> None:
     rng = np.random.default_rng(args.seed)
 
     t0 = time.perf_counter()
-    decoder = (LinearDecoder(lr=args.lr) if args.plan == "B"
-               else AdaptiveDecoder(noise=args.noise, reward_lr=args.reward_lr))
-    ctrl = BancController(Connectome.from_banc(), decoder=decoder)
-    bridge = VisionBridge(fps=30, fisheye=True)
-    env = DroneEnv(thrust_mode=args.thrust)
-    print(f"start {time.perf_counter() - t0:.0f} s", flush=True)
-
-    # Kalibracja dokładnie jak przez ZMQ: te same sceny, ten sam ControlServer.
-    if args.plan == "A":
-        decoder.noise = 0.0
-    calib = LocalClient(ControlServer(bridge, ctrl)).calibrate(env.calibration_render)
-    if args.plan == "A":
-        decoder.noise = args.noise
-    print("kalibracja:", {k: v for k, v in calib.items() if k not in ("ok", "scene")}, flush=True)
+    env, bridge, ctrl, calib = build(args.plan, args.lr, args.noise, args.reward_lr, args.thrust)
+    decoder = ctrl.decoder
+    print(f"start + kalibracja {time.perf_counter() - t0:.0f} s:",
+          {k: v for k, v in calib.items() if k not in ("ok", "scene")}, flush=True)
     if args.init:
         decoder.load_weights(args.init)
         print(f"wagi startowe: {args.init}")
@@ -150,7 +160,7 @@ def main() -> None:
     for ep in range(args.episodes):
         t = time.perf_counter()
         bearing = float(rng.uniform(-args.max_bearing, args.max_bearing))
-        beta = max(0.0, 1.0 - ep / max(1, args.episodes // 2)) if args.plan == "B" else 0.0
+        beta = beta_schedule(ep, args.episodes, args.plan)
         log, loss = runner.episode(bearing, args.duration, learn=args.plan, beta=beta, rng=rng)
         m = summarize(log, env.fps)
         history.append({"episode": ep, "bearing": bearing, "beta": beta, "loss": loss, **m,
