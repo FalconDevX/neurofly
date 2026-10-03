@@ -6,11 +6,12 @@ i Google Doc „Drosophila Vision → BANC — plan integracji” (oba u właśc
 
 | Osoba | Zakres | Stan w repo |
 |---|---|---|
-| 1 | Kamera RGB → FlyGym Retina → RetinaMapper → FlyVis → neurony BANC | `visual_pipeline/` (PR #1, w toku); do tego czasu stub `FakeVision` |
-| 2 | BANC/VNC → motoneurony skrzydeł → thrust/roll/pitch/yaw | `banc_control/` — ten kod |
-| 3 | Symulator drona w MuJoCo (zamiast Gazebo — WSL2 nie działał), kamera, IMU, epizody | `docs/osoba3-plan.md`, `environment.yml` (PR #3); most ZMQ do `banc_control` w planie; do tego czasu `ToyDrone` |
+| 1 | Kamera RGB → FlyGym Retina → RetinaMapper → FlyVis → neurony BANC | `visual_pipeline/` gotowe (PR #1, #6, #7, #10): mapa FlyVis→v888, oczy MuJoCo `drone_eyes.py`, serwer ZMQ `scripts/vision_server.py` |
+| 2 | BANC/VNC → motoneurony skrzydeł → thrust/roll/pitch/yaw | `banc_control/` gotowe (Plan C), GPU; kalibracja na scenach z symulatora przez ZMQ |
+| 3 | Symulator drona w MuJoCo (zamiast Gazebo — WSL2 nie działał), kamera, IMU, epizody | tylko `environment.yml` + model X2 z menagerie; **brak `DroneEnv`, regulatora, mixera** — wąskie gardło |
 
-Szczegółowy plan Osoby 2 z checklistą: `docs/osoba2-plan.md`.
+Plany osób: `docs/osoba1-plan.md`, `docs/osoba2-plan.md`, `docs/osoba3-plan.md`. Plan domknięcia całości: sekcja „Plan domknięcia” niżej.
+Środowisko wzroku (flyvis, flygym, Python 3.12) nie jest zainstalowane na każdej maszynie — testy wzroku są wtedy pomijane.
 
 ## Zasada nr 1: tylko oficjalny BANC
 
@@ -39,10 +40,21 @@ wizualizację — została odrzucona („pseudo sieć, nie przypomina BANC”) i
   `rates_at(idx)` kopiuje z GPU tylko wybrane neurony; `BancController.motor_features()` czyta tylko MN.
 - `readout.py` — średnia aktywność 6 grup MN → komendy. Dekodery = Plany z Miro: C `ManualDecoder`, B `LinearDecoder` (LMS),
   A `AdaptiveDecoder` (node perturbation z nagrodą).
-- `controller.py` — `BancController.step(visual, imu)`; kalibracje: `calibrate_rest(visual=scena neutralna)`,
-  `calibrate_scale(bodźce)`, `calibrate_haltere_sign()`.
+- `controller.py` — `BancController.step(visual, imu)`; kalibracje w kolejności: `calibrate_rest(visual=scena neutralna)`,
+  `calibrate_scale(bodźce)`, `calibrate_yaw_sign(turn_right, turn_left)` (znak osi yaw z odruchu optomotorycznego
+  na sekwencjach obrotu; odwraca `decoder.M[3]`, `yaw_axis_sign`), `calibrate_haltere_sign()` (osobne znaki
+  `haltere_sign` dla roll_rate i `haltere_yaw_sign` dla yaw_rate). Napęd halter = `haltere_roll_weight`·roll_rate +
+  `haltere_yaw_weight`·yaw_rate, domyślnie **0 i 0.5** (roll nie idzie przez haltery, patrz wyniki).
 - `stubs.py` — `FakeVision` (pobudza `visual_projection` L/R wg kierunku beacona), `ToyDrone` (1-osiowa fizyka).
 - `scripts/export_viz_data.py`, `scripts/export_anatomy.py` — dane do wizualizacji (`data/viz/`).
+
+Integracja (w `visual_pipeline/`, ale wspólna z Osobą 2 i 3):
+- `zmq_protocol.py` — protokół symulator ↔ serwer (REQ/REP, `[nagłówek JSON, klatka L, klatka P]`), lekki (numpy + pyzmq).
+  Nagłówek `calib`: sceny `neutral` / `left` / `right` (cel 0°, ∓60°), `turn_left` / `turn_right` (sekwencje obrotu),
+  potem `finish`. `VisionClient.calibrate(render)` robi całość; Osoba 3 daje tylko `render(bearing)` → (L, P).
+- `server.py` — `ControlServer(bridge, ctrl).handle(header, L, P)`: logika serwera bez gniazda (testowalna z fałszywym mostem),
+  `calibrate_controller(ctrl, scenes)`. `scripts/vision_server.py` = gniazdo + kalibracja syntetyczna na starcie.
+- `scripts/example_sim_client.py` — X2 z oczami w MuJoCo: kalibracja na scenach MuJoCo, potem pętla (bez mixera).
 - Testy: `pytest` (mały graf w schemacie BANC + test pełnego v888, pomijany gdy brak danych).
 
 ## Co jest z BANC, a co jest naszym założeniem
@@ -53,7 +65,8 @@ Nasze założenia (zawsze mów o nich wprost, nie przedstawiaj jako wyników BAN
 - model dynamiki i parametry (tau 20 ms, dt 5 ms, gain 0.9, 4 podkroki/klatkę),
 - znaki NT: ACh +, GABA/glutaminian/histamina −, modulatory i brak predykcji +,
 - wejście wzroku jako lewa/prawa strona `visual_projection` (do czasu danych od Osoby 1),
-- kodowanie gyro → aferenty halter L/R (znak dobierany empirycznie przez `calibrate_haltere_sign`),
+- kodowanie gyro → aferenty halter L/R (znaki dobierane empirycznie przez `calibrate_haltere_sign`; wagi roll 0 / yaw 0.5),
+- znak osi yaw dekodera dobierany z odruchu optomotorycznego (`calibrate_yaw_sign`), nie z anatomii,
 - przełożenie MN → dron: thrust ← średnia wing_power, roll ← wing_power L−R, yaw ← wing_steering L−R,
   pitch ← brak (trim w Planie C, uczony w A/B). Wzmocnienia Planu C: (0.2, 1, 1, 1).
 
@@ -62,19 +75,42 @@ Nasze założenia (zawsze mów o nich wprost, nie przedstawiaj jako wyników BAN
 - Sygnał dochodzi od wzroku do MN skrzydeł, ale słaby (aktywność MN ~1e-3) → konieczne `calibrate_scale`.
 - Beacon z boku → roll i yaw w jego stronę, stopniowane z kątem (np. −45°: roll −0.79, yaw −0.73; +45°: roll +0.87, yaw +1.0; thrust 0.49 → ~0.38).
 - Bez kalibracji baseline na scenie neutralnej thrust nasycał się do 1.0 (każde światło = pełny ciąg).
-- Haltery: przy domyślnym kodowaniu pętla destabilizowała → znak odwrócony kalibracją (`haltere_sign = -1`).
-  Po kalibracji roll jest korygowany, ale jest silne sprzężenie na yaw (±1) i spadek thrust.
-  W symulacji podmuchu: szczyt przechyłu 41° → 30°, ale wolniejszy powrót — stabilizacja jeszcze niedobra.
+- Haltery: pobudzenie aferentów halter L/R daje w v888 głównie yaw (±1), roll słabo (−0.14), do tego spadek thrust.
+  Jeden kanał L/R nie stabilizuje więc dwóch osi: z roll_rate w napędzie (nawet z osobnymi znakami) `ToyDrone`
+  po kopnięciu 2 rad/s rozkręca się do 6–11 rad/s. Stąd domyślnie haltery tylko z yaw_rate, a poziom (roll/pitch)
+  ma trzymać regulator symulatora.
+- Haltery tylko yaw (`haltere_yaw_weight` 0.5, `FakeVision`, `ToyDrone`, roll = 0): kopnięcie yaw 2 rad/s → −0.03 rad/s
+  po 5 s; cel 29° w prawo → +1° po 5 s, thrust 0.49. Bez halter oscyluje (+26…+33° po 5 s). Waga 1.0/2.0: gorzej
+  (resztkowy błąd 10–20°, thrust 0.45/0.35). Do sprawdzenia z prawdziwym FlyVis i w MuJoCo.
 - Wydajność (RTX 4060 Laptop): GPU 0.3 ms/podkrok, ~2.6 ms/klatkę (4 podkroki + wejście); CPU ~24 ms/klatkę.
   Wejście wzrokowe jest zwektoryzowane (`Connectome.indices_of`), ~1.4 ms dla 7k rekordów.
 
-## Następne kroki (Osoba 2)
+## Plan domknięcia (ustalony 2026-10-03, idziemy według niego)
 
-1. Uzgodnić z Osobą 1: aktywność przypisana do root ID **v888**.
-2. ~~Przyspieszyć `RateDynamics`~~ — zrobione (GPU).
-3. Uzgodnić z Osobą 3: `FlightCommand.to_json()` ↔ mixer, IMU, częstotliwość klatek.
-4. Dostroić sprzężenie halter → yaw.
-5. Plan A/B dopiero gdy pętla z MuJoCo działa; Plan C musi działać zawsze jako fallback.
+Zrobione wcześniej: ID v888 uzgodnione z Osobą 1 (`unmatched_ids = 0`), dynamika na GPU, oczy MuJoCo i most ZMQ (Osoba 1).
+
+**Etap 1 — pętla z MuJoCo działa w ogóle** (ścieżka krytyczna: Osoba 3)
+- [ ] O3: `DroneEnv` (`reset`/`step`) na X2 z oczami z `drone_eyes.py`, regulator prędkości kątowych + mixer
+  `[thrust, roll, pitch, yaw]` → 4 silniki, `pyzmq` w `environment.yml`.
+- [ ] O3: klient ZMQ w `DroneEnv.step()` na wzór `example_sim_client.py`, z `VisionClient.calibrate(render)` po starcie.
+- [x] O1+O2: kalibracja na scenach z symulatora (`calib` w protokole) — naprawia thrust = 0 na scenie MuJoCo.
+  Zrobione na gałęzi `osoba2-sim-calibration`, testowane fałszywym mostem; **niesprawdzone z prawdziwym FlyVis + MuJoCo**.
+
+**Etap 2 — zachowanie**
+- [x] O2: znak yaw z obrotu (`calibrate_yaw_sign`), wpięty w kalibrację serwera (syntetyczną i z symulatora).
+- [x] O2: haltery: osobne znaki roll/yaw, domyślnie tylko yaw_rate.
+- [ ] O2+O3: **wariant demo (Plan C, musi działać zawsze):** symulator trzyma poziom (angle mode), BANC daje yaw + thrust
+  (roll z BANC ignorowany, jak `run_closed_loop.py --yaw-only`).
+- [ ] O1/O2: potwierdzić z FlyVis: `scripts/check_optomotor.py` po kalibracji ma „hamuje obrót”, `run_closed_loop.py` bez ciągłego obrotu.
+
+**Etap 3 — demo i prezentacja**
+- [ ] O3: scenariusze zawis → skręt do celu z boku → podmuch; zapis wideo i metryk (błąd kursu w czasie).
+- [ ] Wszyscy: nagranie demo — oczy, aktywność BANC (explorer), dron obok siebie.
+- [ ] O2: `docs/prezentacja/` na liczby z v888, z rozdziałem „z BANC” / „nasze założenia”.
+- [ ] Opcjonalnie: Plan A/B (`LinearDecoder`/`AdaptiveDecoder`) dopiero gdy Etap 2 działa w MuJoCo.
+
+Do uzgodnienia z Osobą 3: angle mode czy tylko acro (czy roll z BANC w ogóle idzie do drona); 30 FPS kamer vs krok
+fizyki; jeden serwer `--mode command` (domyślnie) czy osobny proces Osoby 2 (`--mode activity`).
 
 ## Wizualizacja
 
