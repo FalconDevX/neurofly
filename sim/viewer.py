@@ -3,16 +3,19 @@
     python -m sim.viewer [--scene sim/assets/scene_hover.xml]
 
 Klawisze (w oknie podglądu, trzymane):
-    W / S        lot do przodu / do tyłu
-    A / D        lot w lewo / w prawo
+    S / W        lot do przodu / do tyłu
+    D / A        lot w lewo / w prawo
     Shift / Ctrl wznoszenie / opadanie
     Q / E        powolny obrót w lewo / w prawo
+    L            kamera przypięta do drona / swobodna
+    kółko        zoom (od siebie = przybliż)
     Backspace    reset symulacji do stanu startowego (keyframe "hover")
     Spacja       pauza / wznowienie
 
 Po puszczeniu klawiszy dron hamuje i trzyma wysokość (sim/control.py).
-Litery są też skrótami flag wbudowanego podglądu MuJoCo (W wireframe, S cienie, ...),
-więc flagi wizualizacji są przywracane w każdej klatce — przełączanie ich z menu nie działa.
+Klawisze lotu, L i kółko przechwytuje hook Windows (sim/keyboard.py), więc nie przełączają
+skrótów podglądu MuJoCo (W wireframe, S cienie, L additive) — stąd brak migania na czarno.
+Flagi wizualizacji i tak są przywracane w każdej klatce (pozostałe litery dalej są skrótami).
 """
 
 import argparse
@@ -32,6 +35,7 @@ DEFAULT_SCENE = Path(__file__).parent / "assets" / "scene_hover.xml"
 # Kody klawiszy GLFW.
 KEY_SPACE = 32
 KEY_BACKSPACE = 259
+ZOOM_STEP = 1.12  # mnożnik odległości kamery na jeden krok kółka
 
 
 class Controls:
@@ -63,6 +67,15 @@ def reset_to_start(model, data, props, flight, key_id):
     flight.reset()
 
 
+def set_camera_lock(viewer, model, locked):
+    """Przypięta: kamera śledzi drona. Swobodna: zostaje w miejscu, sterowanie myszą jak zwykle."""
+    if locked:
+        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        viewer.cam.trackbodyid = model.body("x2").id
+    else:
+        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--scene", type=Path, default=DEFAULT_SCENE)
@@ -78,8 +91,8 @@ def main():
     reset_to_start(model, data, props, flight, key_id)
 
     with mujoco.viewer.launch_passive(model, data, key_callback=controls.on_key) as viewer:
-        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_TRACKING
-        viewer.cam.trackbodyid = model.body("x2").id
+        camera_locked = True
+        set_camera_lock(viewer, model, camera_locked)
         viewer.cam.distance = 1.5
         vis_flags = viewer.opt.flags.copy()
         render_flags = viewer.user_scn.flags.copy()
@@ -93,6 +106,8 @@ def main():
             last = now
             reset, paused = controls.take()
             setpoints = keyboard.setpoints()
+            camera_toggles = keyboard.take_camera_toggles()
+            wheel = keyboard.take_wheel()
 
             with viewer.lock():
                 if reset:
@@ -103,12 +118,19 @@ def main():
                         flight.apply(model, data, **setpoints)
                         mujoco.mj_step(model, data)
                     props.advance(data, frame_dt)
+                if camera_toggles % 2:
+                    camera_locked = not camera_locked
+                    set_camera_lock(viewer, model, camera_locked)
+                    print("kamera:", "przypięta do drona" if camera_locked else "swobodna")
+                if wheel:
+                    viewer.cam.distance = min(50.0, max(0.2, viewer.cam.distance * ZOOM_STEP ** -wheel))
                 viewer.opt.flags[:] = vis_flags
                 viewer.user_scn.flags[:] = render_flags
                 viewer.user_scn.ngeom = 0
                 props.draw(viewer.user_scn, data)
             viewer.sync()
             time.sleep(max(0.0, 1 / 60 - (time.perf_counter() - now)))
+    keyboard.close()
 
 
 if __name__ == "__main__":
