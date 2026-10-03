@@ -65,7 +65,7 @@ export default function Explorer() {
       <header className="top">
         <div className="brand">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="logo-dark.png" alt="" width={46} height={35} />
+          <img src="logo-fly.png" srcSet="logo-fly.png 1x, logo-fly@2x.png 2x" alt="NeuroFly logo" width={54} height={32} />
           <div><b>Neuro<span>Fly</span></b><small>BANC v888 · connectome explorer · GPU render</small></div>
         </div>
         <nav className="tabs" role="tablist" aria-label="View mode">

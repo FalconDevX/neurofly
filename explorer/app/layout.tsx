@@ -9,6 +9,7 @@ const mono = Geist_Mono({ subsets: ["latin", "latin-ext"], variable: "--font-mon
 
 export const metadata: Metadata = {
   title: "NeuroFly BANC Explorer",
+  icons: { icon: "logo-fly.png" },
   description: "BANC v888 connectome in 3D, rendered on the GPU: somas, flight-neuron skeletons, synaptic partners and drone commands.",
 };
 
