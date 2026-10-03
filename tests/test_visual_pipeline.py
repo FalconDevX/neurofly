@@ -15,6 +15,39 @@ def test_map_file_schema():
     assert m.banc_888_id.notna().all()
 
 
+def test_visual_batch_matches_record_list():
+    from banc_control import BancActivation, BancController, Connectome, VisualBatch
+    from tests.test_banc_control import mini_banc
+
+    c = Connectome.from_banc_tables(*mini_banc())
+    ctrl = BancController(c)
+    ids = np.array([*c.root_ids[:4], 123456789], dtype=np.int64)  # ostatni nie istnieje
+    act = np.array([0.5, -1.0, 2.0, 0.0, 7.0])
+
+    from_list = ctrl.external_input([BancActivation(int(r), "", float(a)) for r, a in zip(ids, act)], None)
+    unmatched_list = ctrl.unmatched_ids
+    from_batch = ctrl.external_input(VisualBatch(ids, act), None)
+    assert np.allclose(from_list, from_batch)
+    assert ctrl.unmatched_ids == unmatched_list == 1
+
+
+def test_prepare_frame_resizes_and_drops_alpha():
+    pytest.importorskip("PIL")
+    from visual_pipeline.frames import RETINA_SHAPE, prepare_frame
+
+    assert prepare_frame(np.zeros((480, 640, 4), np.uint8)).shape == RETINA_SHAPE
+    assert prepare_frame(np.ones((100, 100))).max() == 255
+
+
+def test_fake_camera_puts_beacon_on_the_correct_side():
+    from visual_pipeline.fake_camera import BAR, FakeStereoCamera
+
+    cam = FakeStereoCamera(beacon_azimuth=0.0)
+    left, right = cam.render(yaw=-np.deg2rad(45))  # cel 45° w prawo
+    assert (right == BAR).any() and not (left == BAR).any()
+    assert np.isclose(cam.bearing(-np.deg2rad(45)), np.deg2rad(45))
+
+
 def test_retina_mapper_is_bijection():
     pytest.importorskip("flygym")
     pytest.importorskip("flyvis")

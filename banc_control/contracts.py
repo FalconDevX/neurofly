@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 
+import numpy as np
+
 
 @dataclass(frozen=True)
 class BancActivation:
@@ -17,6 +19,18 @@ class BancActivation:
     banc_root_id: int
     cell_type: str
     activity: float
+
+
+@dataclass(frozen=True)
+class VisualBatch:
+    """Szybka ścieżka w tym samym procesie: te same dane co ``list[BancActivation]``, jako tablice.
+
+    Tworzenie ~18k obiektów ``BancActivation`` co klatkę kosztuje ~25 ms; tablice ~0 ms.
+    ``root_ids`` ma być tym samym obiektem z klatki na klatkę (kontroler cache'uje indeksy).
+    """
+
+    root_ids: np.ndarray  # (N,) int64, banc_888_id
+    activity: np.ndarray  # (N,) float
 
 
 def parse_visual_activity(payload: str | list[dict]) -> list[BancActivation]:

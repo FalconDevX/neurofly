@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from .connectome import HALTERE_GROUPS, MOTOR_GROUPS, Connectome
-from .contracts import BancActivation, FlightCommand, ImuState
+from .contracts import BancActivation, FlightCommand, ImuState, VisualBatch
 from .dynamics import RateDynamics
 from .readout import ManualDecoder
 
@@ -32,11 +32,24 @@ class BancController:
         self._motor_idx = np.concatenate(motor)
         self._motor_split = np.cumsum([len(m) for m in motor])[:-1]
         self.unmatched_ids = 0
+        self._batch_ids: np.ndarray | None = None
+        self._batch_idx = np.empty(0, dtype=np.int64)
 
-    def external_input(self, visual: list[BancActivation], imu: ImuState | None) -> np.ndarray:
+    def _batch_index(self, root_ids: np.ndarray) -> np.ndarray:
+        """Indeksy neuronów dla ``VisualBatch.root_ids`` (-1 = brak), liczone raz na tablicę."""
+        if self._batch_ids is not root_ids:
+            self._batch_idx = self.c.indices_of(np.asarray(root_ids, dtype=np.int64))
+            self._batch_ids = root_ids
+        return self._batch_idx
+
+    def external_input(self, visual: list[BancActivation] | VisualBatch, imu: ImuState | None) -> np.ndarray:
         ext = np.zeros(self.c.n)
-        idx = self.c.indices_of(np.fromiter((a.banc_root_id for a in visual), np.int64, len(visual)))
-        act = np.fromiter((a.activity for a in visual), float, len(visual))
+        if isinstance(visual, VisualBatch):
+            idx = self._batch_index(visual.root_ids)
+            act = np.asarray(visual.activity, dtype=float)
+        else:
+            idx = self.c.indices_of(np.fromiter((a.banc_root_id for a in visual), np.int64, len(visual)))
+            act = np.fromiter((a.activity for a in visual), float, len(visual))
         hit = idx >= 0
         self.unmatched_ids = int((~hit).sum())
         np.add.at(ext, idx[hit], self.visual_gain * act[hit])
@@ -81,7 +94,7 @@ class BancController:
         self.decoder.calibrate_scale([self._settle(v, None, steps) for v in stimuli])
         self.dyn.reset()
 
-    def step(self, visual: list[BancActivation], imu: ImuState | None = None) -> FlightCommand:
+    def step(self, visual: list[BancActivation] | VisualBatch, imu: ImuState | None = None) -> FlightCommand:
         self.dyn.step(self.external_input(visual, imu), self.substeps)
         feats = self.motor_features()
         cmd = self.decoder.decode(feats)
