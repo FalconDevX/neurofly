@@ -23,6 +23,7 @@ Potem w `explorer/`:
 npm install
 npm run dev        # http://localhost:3000 (predev kopiuje dane z ../data/viz do public/data)
 npm run build      # statyczny eksport do out/
+npm run build:artifact   # eksport pod Artifact na claude.ai do out-artifact/ (względne ścieżki, next/ zamiast _next/)
 ```
 
 ## Struktura

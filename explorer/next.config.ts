@@ -4,6 +4,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "export",
   images: { unoptimized: true },
+  // "." tylko w buildzie pod Artifact (scripts/build-artifact.mjs); zwykły build bez zmian
+  assetPrefix: process.env.ASSET_PREFIX,
 };
 
 export default nextConfig;

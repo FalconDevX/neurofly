@@ -9,6 +9,7 @@
     "dev": "next dev",
     "prebuild": "node scripts/sync-data.mjs",
     "build": "next build",
+    "build:artifact": "node scripts/build-artifact.mjs",
     "start": "npx serve out",
     "typecheck": "tsc --noEmit"
   },
