@@ -143,6 +143,13 @@ class Master:
         who = self.label(name)
         kind = msg["type"]
         if kind == "ping":
+            mine, theirs = bool(getattr(self.args, "world", False)), bool(msg.get("world", False))
+            if mine != theirs:  # np. master --world, a worker bez: macierze wag mają inny rozmiar
+                flag = lambda w: "z --world" if w else "bez --world"  # noqa: E731
+                err = (f"inny tryb: master {flag(mine)}, worker {flag(theirs)} — uruchom workera "
+                       f"{'z' if mine else 'bez'} --world")
+                print(f"[{short_gpu(msg.get('gpu', '?'))}] ODRZUCONY (komputer {name}): {err}", flush=True)
+                return {"kind": "stop", "error": err}
             self.pinged[name] = short_gpu(msg.get("gpu", "?"))
             print(f"[{self.label(name)}] zgłosił się (komputer {name}), {len(self.pinged)}/{self.needed}", flush=True)
             if self.finished:
@@ -152,6 +159,11 @@ class Master:
             return self.task(name)
         if kind == "hello":
             calib = msg["calib"]
+            if self.M is not None and np.shape(msg["M"]) != self.M.shape:
+                err = (f"wagi workera {np.shape(msg['M'])} ≠ mastera {self.M.shape} — inny --readout / --world "
+                       "albo --init z innego treningu")
+                print(f"[{who}] ODRZUCONY: {err}", flush=True)
+                return {"kind": "stop", "error": err}
             if self.ref is None:
                 self.ref = {k: calib[k] for k in ("yaw_axis_sign", "hover_thrust", "pitch_trim")}
                 if self.M is None:
@@ -281,7 +293,7 @@ def run_worker(args) -> None:
                      "(sprawdź adres, czy master działa i zaporę na porcie)")
 
     # zgłoszenie przed wczytaniem BANC: master od razu wie, czy ten komputer jest osiągalny
-    reply = send({"type": "ping", "name": host, "gpu": gpu})
+    reply = send({"type": "ping", "name": host, "gpu": gpu, "world": args.world})
     if reply["kind"] == "stop":
         sys.exit(f"[{name}] master przerwał: {reply.get('error', '')}")
     print(f"[{name}] połączony z masterem {args.host}:{args.port}, ładuję BANC…", flush=True)

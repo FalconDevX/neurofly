@@ -101,3 +101,21 @@ def test_master_takes_initial_weights_from_worker_with_init_file(tmp_path):
     m.handle({**_hello("slave"), "M": np.zeros((4, 6)).tolist(), "init": False})  # pierwszy, ale bez pliku
     m.handle({**_hello("laptop"), "init": True})
     np.testing.assert_array_equal(m.M0, np.eye(4, 6))
+
+
+def test_master_rejects_worker_in_other_mode(tmp_path):
+    from train_distributed import Master
+
+    a = _args(tmp_path)
+    a.world = True
+    m = Master(a)
+    reply = m.handle({"type": "ping", "name": "slave", "gpu": "RTX 3070 Ti"})  # worker bez --world
+    assert reply["kind"] == "stop" and "--world" in reply["error"]
+    assert "slave" not in m.pinged
+    assert m.handle({"type": "ping", "name": "laptop", "world": True})["kind"] == "pong"
+
+    a = _args(tmp_path)
+    m = Master(a)
+    m.handle(_hello("A"))
+    bad = {**_hello("B"), "M": np.zeros((4, 7)).tolist()}  # inny rozmiar wag
+    assert m.handle(bad)["kind"] == "stop"
