@@ -51,8 +51,14 @@ def _manual_matrix() -> np.ndarray:
 class ManualDecoder:
     """Plan C. ``baseline`` odejmuje aktywność spoczynkową, ``hover_thrust`` / ``pitch_trim`` = trymy."""
 
-    def __init__(self, gains=(0.2, 1.0, 1.0, 1.0), hover_thrust: float = 0.5, pitch_trim: float = 0.0) -> None:
+    def __init__(self, gains=(0.2, 1.0, 1.0, 1.0), hover_thrust: float = 0.5, pitch_trim: float = 0.0,
+                 bias: bool = False) -> None:
+        """``bias``: ostatnia kolumna M działa na stałą 1 — uczony wyraz wolny każdej osi (np. ciąg
+        zawisu i stała korekta yaw w scenie innej niż kalibracyjna). W macierzy ręcznej = 0."""
+        self.bias = bias
         self.M = np.diag(gains) @ _manual_matrix()
+        if bias:
+            self.M = np.hstack([self.M, np.zeros((len(AXES), 1))])
         self.hover_thrust = hover_thrust
         self.pitch_trim = pitch_trim
         self.baseline = np.zeros(len(MOTOR_GROUPS))
@@ -60,11 +66,12 @@ class ManualDecoder:
 
     def ensure_features(self, n: int) -> None:
         """Dopasowuje dekoder do ``n`` cech (6 MN + dodatkowe neurony); nowe kolumny M = 0."""
-        extra = n - self.M.shape[1]
+        extra = n - len(self.baseline)
         if extra < 0:
-            raise ValueError(f"dekoder ma {self.M.shape[1]} cech, odczyt kontrolera {n}")
+            raise ValueError(f"dekoder ma {len(self.baseline)} cech, odczyt kontrolera {n}")
         if extra:
-            self.M = np.hstack([self.M, np.zeros((len(AXES), extra))])
+            k = len(self.baseline)  # nowe kolumny przed kolumną wyrazu wolnego
+            self.M = np.hstack([self.M[:, :k], np.zeros((len(AXES), extra)), self.M[:, k:]])
             self.baseline = np.r_[self.baseline, np.zeros(extra)]
             self.scale = np.r_[self.scale, np.ones(extra)]
 
@@ -81,7 +88,8 @@ class ManualDecoder:
                            np.where(dev[n:] > 1e-12, dev[n:], np.inf)]
 
     def normalized(self, features: np.ndarray) -> np.ndarray:
-        return (features - self.baseline) / self.scale
+        x = (features - self.baseline) / self.scale
+        return np.r_[x, 1.0] if self.bias else x
 
     def decode(self, features: np.ndarray) -> FlightCommand:
         thrust, roll, pitch, yaw = self.M @ self.normalized(features)
@@ -96,9 +104,12 @@ class ManualDecoder:
         """Wczytuje ``M`` i trymy z ``save``. Wywoływać PO kalibracji: ``calibrate_yaw_sign`` odwraca
         ``M[3]``, a wyuczona macierz ma już znak yaw z kalibracji, przy której była uczona."""
         d = np.load(path)
-        if d["M"].shape != self.M.shape:
+        M = d["M"]
+        if self.bias and M.shape == (self.M.shape[0], self.M.shape[1] - 1):
+            M = np.hstack([M, np.zeros((M.shape[0], 1))])  # wagi bez wyrazu wolnego → wolny = 0
+        if M.shape != self.M.shape:
             raise ValueError(f"wagi {path}: M {d['M'].shape}, dekoder {self.M.shape} — inny odczyt (--readout mn/dn)?")
-        self.M = d["M"].copy()
+        self.M = M.copy()
         self.hover_thrust, self.pitch_trim = float(d["hover_thrust"]), float(d["pitch_trim"])
 
 
