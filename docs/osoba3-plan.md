@@ -30,6 +30,18 @@ cd ../..
 python -m mujoco.viewer --mjcf=third_party/mujoco_menagerie/skydio_x2/scene.xml
 ```
 
+**Laptop z dwiema kartami (np. Intel UHD + NVIDIA):** Windows domyślnie odpala Pythona na zintegrowanej
+karcie — scena z terenem i drzewami renderuje się wtedy ~230 ms/klatkę (lag), na GTX 1650 ~10 ms.
+Ustawienie „Wysoka wydajność” dla Pythona ze środowiska (jak Ustawienia → System → Ekran → Grafika):
+
+```powershell
+$py = (conda run -n neurofly-sim python -c "import sys; print(sys.executable)").Trim()
+New-ItemProperty -Path "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences" -Name $py -Value "GpuPreference=2;" -PropertyType String -Force
+```
+
+Sprawdzenie: `python -c "import mujoco; from OpenGL import GL; c = mujoco.GLContext(64, 64); c.make_current(); print(GL.glGetString(GL.GL_RENDERER))"`
+powinno wypisać kartę NVIDIA.
+
 Paczki numeryczne w `environment.yml` są instalowane przez pip celowo: starsza conda (4.x) dobiera
 binarki pod numpy 1.x, a `mujoco` wymaga numpy 2.x.
 
@@ -44,12 +56,31 @@ Sprawdzone: numpy 2.4.6, scipy 1.17.1, matplotlib 3.11.2, mujoco 3.14.0, model S
   zgodny ze znakiem momentu reakcji. Działa też z `mujoco.Renderer` (`props.draw(renderer.scene, data)`).
 - `sim/control.py` — `RateController`: interfejs zespołu `RateCommand(thrust [N], roll/pitch/yaw_rate [rad/s])`
   → PID prędkości kątowych → mixer (macierz alokacji z geometrii silników) → `data.ctrl`.
-  Nad nim `VelocityController` do ręcznego latania (prędkość zadana → przechylenie → prędkości kątowe,
-  trzymanie wysokości). Używa prawdziwego stanu z symulatora — tylko do podglądu, nie jako wejście sieci.
-- `python -m sim.viewer` — ręczne latanie (Windows, klawisze trzymane): `W`/`S` przód/tył,
-  `A`/`D` lewo/prawo, `Shift`/`Ctrl` wznoszenie/opadanie, `Q`/`E` powolny obrót, `Backspace` reset,
-  `Spacja` pauza. Bez klawiszy dron trzyma pozycję i wysokość. Litery są też skrótami flag
-  wbudowanego podglądu MuJoCo (W wireframe, S cienie, ...), więc viewer przywraca flagi w każdej klatce.
+  **Bez autostabilizacji** — nic nie poziomuje drona, nie hamuje i nie trzyma wysokości; tego ma się
+  nauczyć model. Przy zerowych prędkościach kątowych dron przestaje się obracać, ale zostaje w przechyle.
+  `VelocityController` (poziomowanie, hamowanie, trzymanie wysokości) jest tylko do ręcznych testów
+  w podglądzie — włączany Altem, nie wchodzi do pętli modelu.
+- Sceny: `sim/assets/common.xml` (dron, światło, niebo, zielona kratka) + `scene_hover.xml` (płaska podłoga)
+  i `scene_beacon.xml` (domyślna w podglądzie): losowy teren 60 × 60 m (pagórki do +2 m, zagłębienia
+  do −1 m) otoczony ścianami 8 m + cel: pomarańczowe pole lądowania 1.2 × 1.2 m z czarnym masztem 2.5 m
+  i czerwoną flagą. `sim/terrain.py`: `load_scene(path)` ładuje scenę z pulą drzew, a
+  `randomize(model, data, seed)` losuje teren, drzewa i cel (~0.1 s) — start zawsze płaski, cel 15–23 m
+  od startu, ≥ 6 m od ścian, na wyrównanym placu (też na wzniesieniu albo w dołku). Scenę beacon zawsze
+  ładujemy przez `load_scene` + `randomize` (bez nich nie ma drzew, a teren jest płaski na −1 m).
+  `sim/trees.py`: 55–80 drzew — świerk, dąb, brzoza, krzak (wysokość, pień, korona losowane w zakresach
+  gatunku); nie nachodzą na siebie, na start (≥ 3 m) ani na plac celu (≥ 2.5 m), nad czubkiem zostaje
+  ≥ 1.5 m do granicy planszy. Pień i korona kolidują z dronem. Pula drzew jest kompilowana jako
+  obwiednia największego drzewa — inaczej MuJoCo (bvh_aabb liczone przy kompilacji) gubi kolizje.
+  `outside_arena()`: dotyk ściany albo lot ponad 8 m = poza planszą — podgląd resetuje wtedy drona na start
+  (ten sam świat).
+  `sim/target.py`: `Target.reached()` = dron nad polem niżej niż 1.5 m (pole robi się zielone),
+  `distance()` do nagrody/metryk. Pozycja celu nie jest wejściem sterowania — dron ma go zobaczyć.
+- `python -m sim.viewer` — `Alt` włącza/wyłącza autostabilizację (start: wyłączona). Bez niej tryb acro
+  (Windows, klawisze trzymane = prędkość kątowa):
+  `S`/`W` nos w dół/górę, `D`/`A` przechył w lewo/prawo, `Q`/`E` obrót, `Shift`/`Ctrl` ciąg ±30% od
+  zawisu, `L` kamera przypięta/swobodna, kółko zoom, `Backspace` reset drona, `N` nowy losowy świat,
+  `Spacja` pauza; `--seed` odtwarza świat (ziarno jest wypisywane w konsoli).
+  Klawisze lotu przechwytuje hook Windows (`sim/keyboard.py`), żeby nie przełączały skrótów podglądu MuJoCo.
 
 ## Dalej
 
