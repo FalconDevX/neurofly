@@ -8,5 +8,6 @@ Hackathon: zamknięta pętla wzrok → connectome Drosophila → sterowanie → 
 | 2 | BANC/VNC → motoneurony skrzydeł → thrust / roll / pitch / yaw (`banc_control/`) |
 | 3 | Gazebo Sim, quadcopter, kamera, IMU, epizody treningowe |
 
+- Plan Osoby 1: [docs/osoba1-plan.md](docs/osoba1-plan.md) (`visual_pipeline/`, Python 3.12, `pip install -e .[vision]`)
 - Plan Osoby 2: [docs/osoba2-plan.md](docs/osoba2-plan.md)
 - Testy: `pip install -e .[dev] && pytest`
