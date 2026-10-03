@@ -3,10 +3,9 @@
   Teren: heightfield 60 x 60 m otoczony ścianami 8 m. Wysokości (pagórki do +2 m, zagłębienia do -1 m)
   i pozycję celu losuje sim/terrain.py: randomize(model, data, seed) — bez tego teren jest płaski
   na z = -1 m, a cel wisi w powietrzu, więc scenę zawsze ładujemy przez randomize (robi to sim.viewer).
-  Cel = pole lądowania 1.2 x 1.2 m (12 x 12 kratek) z masztem i flagą pośrodku.
-  Maszt jest ciemny i wysoki, żeby był widoczny z daleka w kamerach-oczach (kontrast z niebem).
-  Site "target" (środek pola na podłodze) i geom "target_zone" czyta sim/target.py.
-  Pole i flaga nie kolidują; maszt i teren tak.
+  Cel = cienki pomarańczowy prostopadłościan 0.3 x 0.3 x 3 m, PRZENIKALNY (bez kolizji) — sukces w chwili
+  zetknięcia drona z nim (sim/target.py). Wysoki i pomarańczowy na granatowym tle — widoczny z daleka w oczach.
+  Site "target" (środek podstawy na ziemi) i geom "target_box" czyta sim/target.py; teren pod nim jest wyrównany.
 -->
 <mujoco model="neurofly beacon">
   <include file="common.xml"/>
@@ -32,10 +31,6 @@
     <!-- bloki (sim/blocks.py): odcień z geom_rgba -->
     <material name="block" texture="blueprint_block" specular="0.2" shininess="0.3"/>
     <material name="wall" rgba="0.45 0.7 1.0 0.25"/>
-    <material name="target_zone" rgba="0.95 0.45 0.05 1"/>
-    <material name="target_border" rgba="0.95 0.95 0.95 1"/>
-    <material name="beacon_pole" rgba="0.05 0.05 0.05 1"/>
-    <material name="beacon_flag" rgba="0.85 0.05 0.05 1"/>
   </asset>
 
   <worldbody>
@@ -47,14 +42,8 @@
     <geom name="wall_west" type="box" size="0.2 30.2 4.5" pos="-30.2 0 3.5" material="wall"/>
     <body name="target" pos="5 -1.5 0">
       <site name="target" pos="0 0 0" size="0.05" group="5"/>
-      <geom name="target_border" type="box" size="0.65 0.65 0.002" pos="0 0 0.002"
-            material="target_border" contype="0" conaffinity="0"/>
-      <geom name="target_zone" type="box" size="0.6 0.6 0.003" pos="0 0 0.003"
-            material="target_zone" contype="0" conaffinity="0"/>
-      <geom name="beacon_pole" type="cylinder" size="0.04 1.25" pos="0 0 1.25" material="beacon_pole"/>
-      <geom name="beacon_flag" type="box" size="0.3 0.005 0.2" pos="0.33 0 2.25"
-            material="beacon_flag" contype="0" conaffinity="0"/>
-      <geom name="beacon_top" type="sphere" size="0.07" pos="0 0 2.53" material="beacon_flag"
+      <!-- przenikalny: contype/conaffinity 0 — dron przelatuje przez niego, a dotknięcie = sukces -->
+      <geom name="target_box" type="box" size="0.15 0.15 1.5" pos="0 0 1.5" rgba="1 0.45 0.05 1"
             contype="0" conaffinity="0"/>
     </body>
   </worldbody>

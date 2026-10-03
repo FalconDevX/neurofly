@@ -62,8 +62,8 @@ Sprawdzone: numpy 2.4.6, scipy 1.17.1, matplotlib 3.11.2, mujoco 3.14.0, model S
   w podglądzie — włączany Altem, nie wchodzi do pętli modelu.
 - Sceny: `sim/assets/common.xml` (dron, światło, niebo, zielona kratka) + `scene_hover.xml` (płaska podłoga)
   i `scene_beacon.xml` (domyślna w podglądzie): losowy teren 60 × 60 m (pagórki do +2 m, zagłębienia
-  do −1 m) otoczony ścianami 8 m + cel: pomarańczowe pole lądowania 1.2 × 1.2 m z czarnym masztem 2.5 m
-  i czerwoną flagą. `sim/terrain.py`: `load_scene(path)` ładuje scenę z pulą bloków, a
+  do −1 m) otoczony ścianami 8 m + cel: cienki pomarańczowy prostopadłościan 0.3 × 0.3 × 3 m, przenikalny (bez kolizji)
+  — sukces w chwili zetknięcia. `sim/terrain.py`: `load_scene(path)` ładuje scenę z pulą bloków, a
   `randomize(model, data, seed)` losuje teren, bloki i cel (~0.1 s) — start zawsze płaski, cel 15–23 m
   od startu, ≥ 6 m od ścian, na wyrównanym placu (też na wzniesieniu albo w dołku). Scenę beacon zawsze
   ładujemy przez `load_scene` + `randomize` (bez nich nie ma bloków, a teren jest płaski na −1 m).
@@ -89,7 +89,7 @@ Sprawdzone: numpy 2.4.6, scipy 1.17.1, matplotlib 3.11.2, mujoco 3.14.0, model S
   (`visual_pipeline/drone_eyes.py`: 157°, ±70°, 512 × 450), pozycja na prawdziwych soczewkach kamery w gimbalu
   na nosie (x = 0.158, y = −0.002 / −0.018, z = 0.065). Podgląd pokazuje je w lewym dolnym rogu sceny
   (render `MujocoEyes` Osoby 1 — bez własnego drona w kadrze, jak FlyGym), 20 Hz (~23 ms na odświeżenie).
-  `sim/target.py`: `Target.reached()` = dron nad polem niżej niż 1.5 m (pole robi się zielone),
+  `sim/target.py`: `Target.reached()` = dron dotyka prostopadłościanu (obrys + 0.3 m zasięgu łopat; robi się zielony),
   `distance()` do nagrody/metryk. Pozycja celu nie jest wejściem sterowania — dron ma go zobaczyć.
 - `python -m sim.viewer` — `Alt` włącza/wyłącza autostabilizację (start: wyłączona). Bez niej tryb acro
   (Windows, klawisze trzymane = prędkość kątowa):
@@ -148,6 +148,40 @@ python scripts/vision_server.py --decoder data/decoders/planB.npz
   Kamera przypięta za tyłem drona obraca się z jego kursem (wygładzenie w czasie, 0.25 s), kółko = zoom, L = swobodna.
 - `sim/terrain.py: upload_terrain()` — po `randomize()` trzeba wysłać teren do GPU każdego `mujoco.Renderer`
   (np. oczu), inaczej kamery widzą poprzedni teren. `WorldEnv` i podgląd robią to same.
+
+## Czujniki drona i metryki
+
+- `sim/sensors.py`: `DroneSensors(model, mode="real" | "ideal")` — realistyczne czujniki: żyroskop (szum 0.01 rad/s +
+  dryf biasu), akcelerometr (szum + bias), dalmierz w dół wzdłuż osi drona (szum 1 cm + 1 %, zasięg 0.05–4 m,
+  1 % zgubionych odczytów, poza zasięgiem brak), przepływ optyczny przód/bok (szum rośnie z wysokością, tylko z odczytem
+  dalmierza), barometr (szum 0.1 m + dryf), prędkość pionowa (estymata z filtra), opóźnienie 20 ms. Ziarno = powtarzalnie.
+  `mode="ideal"` = prawdziwe wartości (zgodność z dotychczasowym zachowaniem).
+- `WorldEnv(sensors="ideal" | "real")` (domyślnie `ideal`, żeby nie zmieniać po cichu treningu `banc_pilot`):
+  `obs["imu"]` z czujników, nowe `obs["sensors"]` = [dalmierz (−1 = brak), przepływ przód, bok, barometr, v_z].
+  Pod Plan A trening powinien przejść na `sensors="real"` (zakres Osoby 2: `world_decoder.drone_sensors` liczy dziś
+  wysokość i prędkość z prawdziwego stanu).
+- `sim/metrics.py`: `EpisodeMetrics` — z PRAWDZIWEGO stanu (nie z czujników): odległość / postęp do celu, błąd kursu,
+  wysokość nad terenem, prędkość, przechył (max), droga, wiatr; wyniki epizodów (cel, wywrotki, poza planszą, najlepszy
+  czas); `--metrics-csv plik.csv` zapisuje podsumowanie każdego epizodu.
+- „GPS” celu (`beacon` w `DroneSensors`, `obs["beacon"]` w `WorldEnv`): kierunek do celu względem nosa
+  [rad, + = w lewo] i odległość w poziomie [m]. W trybie `real` jak prawdziwy GPS + kompas: błąd pozycji ~2.5 m
+  (pływa, ~15 s), kompas ±3°, 5 Hz, opóźnienie 0.2 s. Zmierzone: błąd kierunku (mediana) 7° powyżej 15 m, 8° przy
+  8–15 m, 18° przy 3–8 m, bezużyteczny poniżej 3 m; odległość ±1.9 m. Dron wie mniej więcej, dokąd lecieć — o
+  przeszkodach nic nie wie, a ostatnie metry musi wypatrzyć oczami. Do wykorzystania w dekoderze (Osoba 2) zamiast
+  prawdziwego kierunku do celu.
+- Klawisze w `sim.viewer` i `sim.run_env`: **C** = panel czujników (odczyt | prawda), **M** = panel metryk.
+  Przy włączonym C nad dronem strzałki: pomarańczowa = odczyt GPS, zielona = prawdziwy kierunek do celu.
+- Opóźnienie silników: `RateController(motor_tau=...)` — siła silnika dochodzi do zadanej z tą stałą czasową
+  (filtr 1. rzędu, jak rozpędzające się śmigło). `MOTOR_TAU = 0.04` s; `WorldEnv(motor_tau=0.0)` domyślnie (zgodność),
+  `sim.viewer` / `sim.run_env` domyślnie 0.04 (`--motor-tau`; z `--banc` 0). Zmierzone: ciąg 63 % po τ, stabilizacja
+  stabilna do 80 ms (co 10 i co 30 ms).
+- Testy CI `tests/test_sim_world.py` (32): regulator (zawis, prędkości kątowe, acro bez poziomowania, opóźnienie silników,
+  stabilizacja), nos i oczy w +x, świat (powtarzalność, płaski start, cel 15–23 m na placu, granice), bloki (wolny start
+  i cel, prześwit, kolizja z dronem), wywrotka, wiatr, czujniki (szum, zasięg, opóźnienie, GPS celu), metryki + CSV,
+  `WorldEnv` (Gymnasium, wyniki epizodu, powtarzalność), oczy widzą nowy teren, ślad, łopaty.
+- `sim/trail.py`: ślad lotu — turkusowa linia za dronem (punkt co 10 cm, ostatnie ~30 m, starsze odcinki bledną),
+  czyszczony przy resecie. **T** = wł./wył. w `sim.viewer` i `sim.run_env`. Tylko wizualizacja (~+3 ms renderu).
+  `sim.run_env --sensors real|ideal` (domyślnie `real`, z `--banc` `ideal`).
 
 ## Dalej
 

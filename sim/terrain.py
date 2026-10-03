@@ -5,9 +5,9 @@ Scenę beacon ładujemy przez load_scene() (dokłada pulę bloków) i zawsze los
 Teren to heightfield "terrain" z scene_beacon.xml (60 x 60 m, otoczony ścianami). Wysokości liczymy
 w numpy i wpisujemy do model.hfield_data — każde ziarno daje inny świat, to samo ziarno ten sam.
 
-Gwarancje (żeby dało się dolecieć do flagi):
+Gwarancje (żeby dało się dolecieć do celu):
 - start (0, 0) jest płaski na poziomie gruntu z = 0,
-- cel leży 15–23 m od startu i co najmniej 6 m od ścian, na wyrównanym placu (pole lądowania
+- cel leży 15–23 m od startu i co najmniej 6 m od ścian, na wyrównanym placu (cel
   leży płasko także na zboczu, szczycie pagórka albo w dołku),
 - bloki nie stoją na starcie, na placu celu ani na sobie nawzajem,
 - teren mieści się w [-1, +2] m, a nad szczytem każdego bloku zostaje >= 1.5 m do górnej granicy
@@ -125,7 +125,7 @@ def outside_arena(model, data, body_id):
     """True, gdy dron dotyka ściany albo jest ponad nią (poza planszą)."""
     half = model.hfield_size[model.hfield("terrain").id, 0]
     x, y, z = data.xpos[body_id]
-    return max(abs(x), abs(y)) > half - DRONE_RADIUS or z > WALL_HEIGHT
+    return bool(max(abs(x), abs(y)) > half - DRONE_RADIUS or z > WALL_HEIGHT)
 
 
 def upload_terrain(renderer, model):
