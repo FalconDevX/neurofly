@@ -3,8 +3,9 @@
     python scripts/vision_server.py            # osobny terminal / środowisko Osoby 1
     python scripts/example_sim_client.py       # środowisko symulatora (mujoco, numpy, pyzmq)
 
-Wymaga tylko mujoco, numpy i pyzmq (bez torch/FlyVis). Dron wisi w miejscu i obraca się
-wolno w prawo; pętla wypisuje komendę i opóźnienie. Mixer FlightCommand → silniki X2 to
+Wymaga tylko mujoco, numpy i pyzmq (bez torch/FlyVis). Najpierw kalibracja kontrolera na
+scenach z MuJoCo (``VisionClient.calibrate``), potem dron wisi w miejscu i obraca się wolno
+w prawo; pętla wypisuje komendę i opóźnienie. Mixer FlightCommand → silniki X2 to
 zakres Osoby 3, tu go nie ma.
 """
 
@@ -24,13 +25,23 @@ from visual_pipeline.drone_eyes import MujocoEyes, x2_with_eyes  # noqa: E402
 from visual_pipeline.zmq_protocol import DEFAULT_ADDRESS, VisionClient  # noqa: E402
 
 MENAGERIE = ROOT / "third_party" / "mujoco_menagerie" / "skydio_x2"
-BEACON = '    <geom type="cylinder" size="0.15 2" pos="4 -1.5 2" rgba="0.05 0.05 0.05 1"/>'
+BEACON_XY = (4.0, -1.5)
+BEACON = (f'    <geom type="cylinder" size="0.15 2" pos="{BEACON_XY[0]} {BEACON_XY[1]} 2" '
+          'rgba="0.05 0.05 0.05 1"/>')
+BEACON_HEADING = float(np.arctan2(-BEACON_XY[1], BEACON_XY[0]))  # kurs na cel, + = w prawo
+
+
+def set_pose(data, heading: float) -> None:
+    """Zawis na 1 m, kurs ``heading`` [rad], + = w prawo (MuJoCo: obrót wokół +z, + = w lewo)."""
+    data.qpos[:3] = (0, 0, 1.0)
+    data.qpos[3:7] = (np.cos(-heading / 2), 0, 0, np.sin(-heading / 2))
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--address", default=DEFAULT_ADDRESS)
     ap.add_argument("--frames", type=int, default=90)
+    ap.add_argument("--no-calib", action="store_true", help="zostaw kalibrację syntetyczną serwera")
     args = ap.parse_args()
 
     model = mujoco.MjModel.from_xml_path(str(x2_with_eyes(MENAGERIE, BEACON)))
@@ -40,11 +51,20 @@ def main() -> None:
     gyro = model.sensor("body_gyro").adr[0]
     accel = model.sensor("body_linacc").adr[0]
 
+    def render(bearing: float):
+        """Klatki, gdy cel jest pod kątem ``bearing`` (+ = w prawo) od kierunku lotu."""
+        set_pose(data, BEACON_HEADING - bearing)
+        mujoco.mj_forward(model, data)
+        return eyes.render(data)
+
+    if not args.no_calib:
+        t = time.perf_counter()
+        print("kalibracja:", client.calibrate(render), f"({time.perf_counter() - t:.0f} s)", flush=True)
+
     yaw = 0.0
     for k in range(args.frames):
         yaw += np.deg2rad(30) / 30  # 30°/s w prawo
-        data.qpos[:3] = (0, 0, 1.0)
-        data.qpos[3:7] = (np.cos(-yaw / 2), 0, 0, np.sin(-yaw / 2))
+        set_pose(data, yaw)
         mujoco.mj_forward(model, data)
         left, right = eyes.render(data)
         gx, gy, gz = data.sensordata[gyro:gyro + 3]

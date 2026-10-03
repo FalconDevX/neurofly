@@ -189,6 +189,8 @@ fałszywy kontrast w szachownicę. Most zamienia klatki na luminancję przed Ret
 **Ograniczenie:** tryb `command` kalibruje kontroler na syntetycznych scenach. Na scenie MuJoCo
 `thrust` stoi na 0, bo jasność sceny różni się od kalibracyjnej. Kalibrację trzeba zrobić na
 scenach z symulatora (cel na wprost / ±60°), np. przez dodatkowy typ żądania.
+Rozwiązane: nagłówek `calib` (`neutral` / `left` / `right` / `turn_left` / `turn_right` / `finish`),
+po stronie symulatora wystarczy `VisionClient.calibrate(render)` (patrz `example_sim_client.py`).
 
 ## Znane ograniczenia
 
@@ -198,6 +200,6 @@ scenach z symulatora (cel na wprost / ±60°), np. przez dodatkowy typ żądania
 
 ## Do zrobienia
 
-1. Kalibracja kontrolera na scenach z symulatora (z Osobą 2 i 3).
+1. ~~Kalibracja kontrolera na scenach z symulatora~~ — protokół gotowy, sprawdzić z FlyVis + MuJoCo.
 2. Szkielety dla pozostałych typów: mniej cykliczności, większe pokrycie.
 3. Sprawdzić adnotacje T4 po lewej stronie BANC (rozbieżność 180°).
