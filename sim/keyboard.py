@@ -133,7 +133,7 @@ class FlightKeyboard:
     def command(self, hover_thrust):
         """RateCommand prosto z klawiszy (tryb acro, bez autostabilizacji).
 
-        S/W pochylenie nosa w dół/górę, D/A przechył w lewo/prawo, Q/E obrót w lewo/prawo —
+        W/S pochylenie nosa w dół/górę, A/D przechył w lewo/prawo, Q/E obrót w lewo/prawo —
         trzymany klawisz = stała prędkość kątowa, puszczony = 0 (dron zostaje w bieżącym przechyle).
         Shift/Ctrl: ciąg powyżej/poniżej ciągu zawisu; bez nich stały ciąg zawisu (bez kompensacji
         przechyłu, więc przechylony dron opada).
@@ -143,8 +143,8 @@ class FlightKeyboard:
             return cmd
         with self._lock:
             d = lambda vk: vk in self._held  # noqa: E731
-            cmd.pitch_rate = self.tilt_rate * (d(VK_S) - d(VK_W))
-            cmd.roll_rate = self.tilt_rate * (d(VK_A) - d(VK_D))
+            cmd.pitch_rate = self.tilt_rate * (d(VK_W) - d(VK_S))
+            cmd.roll_rate = self.tilt_rate * (d(VK_D) - d(VK_A))
             cmd.yaw_rate = self.yaw_rate * (d(VK_Q) - d(VK_E))
             cmd.thrust = hover_thrust * (1 + self.throttle * (d(VK_SHIFT) - d(VK_CONTROL)))
         return cmd
@@ -152,15 +152,15 @@ class FlightKeyboard:
     def setpoints(self):
         """Tryb ze stabilizacją: forward/left/up [m/s] i yaw_rate [rad/s] dla VelocityController.
 
-        Te same klawisze co w acro: S/W przód/tył, D/A lewo/prawo, Shift/Ctrl góra/dół, Q/E obrót.
+        Te same klawisze co w acro: W/S przód/tył, A/D lewo/prawo, Shift/Ctrl góra/dół, Q/E obrót.
         """
         sp = dict(forward=0.0, left=0.0, up=0.0, yaw_rate=0.0)
         if not self.available or not self._mujoco_focused():
             return sp
         with self._lock:
             d = lambda vk: vk in self._held  # noqa: E731
-            sp["forward"] = self.speed * (d(VK_S) - d(VK_W))
-            sp["left"] = self.speed * (d(VK_D) - d(VK_A))
+            sp["forward"] = self.speed * (d(VK_W) - d(VK_S))
+            sp["left"] = self.speed * (d(VK_A) - d(VK_D))
             sp["up"] = self.climb * (d(VK_SHIFT) - d(VK_CONTROL))
             sp["yaw_rate"] = self.yaw_rate * (d(VK_Q) - d(VK_E))
         return sp

@@ -2,8 +2,12 @@
   Skydio X2 na bazie MuJoCo Menagerie (Apache-2.0, patrz LICENSE w tym katalogu).
   Zmiany względem oryginału:
     - siatka X2_noprops.obj bez wypalonych tarcz śmigieł (sim/tools/build_x2_assets.py),
-    - site'y prop1..prop4 w środkach wirników — tam sim/propellers.py rysuje obracające się łopaty.
-  Fizyka (masy, kolizje, silniki, sensory) bez zmian.
+    - site'y prop1..prop4 w środkach wirników — tam sim/propellers.py rysuje obracające się łopaty,
+    - kamery-oczy eye_left / eye_right (specyfikacja Osoby 1),
+    - cały dron obrócony o 180° wokół z: w Menagerie nos z kamerą jest po stronie -x, a cały projekt
+      (Osoba 1, 2, regulator) przyjmuje +x = przód. Siatka, kolizje, wirniki i site'y mają (x, y) -> (-x, -y);
+      mixer liczy się z geometrii, więc fizyka lotu się nie zmienia.
+  Masy, kształty kolizji, silniki i sensory bez zmian (tylko obrócone razem z dronem).
 -->
 <mujoco model="Skydio X2 (neurofly)">
   <compiler autolimits="true"/>
@@ -40,25 +44,33 @@
     <body name="x2" pos="0 0 0.1" childclass="x2">
       <freejoint/>
       <camera name="track" pos="-1 0 .5" xyaxes="0 -1 0 1 0 2" mode="trackcom"/>
+      <!-- Oczy drona: orientacja wg specyfikacji Osoby 1 (visual_pipeline/drone_eyes.py, eye_camera_xml):
+           fovy 157° jak FlyGym, osie 70° w lewo/prawo od kierunku lotu, góra obrazu = +z drona.
+           Pozycja: na prawdziwych soczewkach kamery w gimbalu na nosie X2 (z wierzchołków siatki:
+           przód soczewek x = 0.1547, środki y = -0.0018 / -0.0182, z = 0.0646), 3 mm przed szkłem.
+           Przy zmianie specyfikacji Osoby 1 zaktualizować też tutaj. -->
+      <camera name="eye_left" pos="0.158 -0.0018 0.0646" fovy="157.0" xyaxes="0.9397 -0.3420 0.0000 0 0 1"/>
+      <camera name="eye_right" pos="0.158 -0.0182 0.0646" fovy="157.0" xyaxes="-0.9397 -0.3420 0.0000 0 0 1"/>
       <site name="imu" pos="0 0 .02"/>
-      <geom material="x2" mesh="x2" class="visual" quat="0 0 1 1"/>
-      <geom class="collision" size=".06 .027 .02" pos=".04 0 .02"/>
-      <geom class="collision" size=".06 .027 .02" pos=".04 0 .06"/>
-      <geom class="collision" size=".05 .027 .02" pos="-.07 0 .065"/>
-      <geom class="collision" size=".023 .017 .01" pos="-.137 .008 .065" quat="1 0 0 1"/>
-      <geom name="rotor1" class="rotor" pos="-.14 -.18 .05" mass=".25"/>
-      <geom name="rotor2" class="rotor" pos="-.14 .18 .05" mass=".25"/>
-      <geom name="rotor3" class="rotor" pos=".14 .18 .08" mass=".25"/>
-      <geom name="rotor4" class="rotor" pos=".14 -.18 .08" mass=".25"/>
+      <!-- quat "1 1 0 0" = oryginalne "0 0 1 1" obrócone o 180° wokół z -->
+      <geom material="x2" mesh="x2" class="visual" quat="1 1 0 0"/>
+      <geom class="collision" size=".06 .027 .02" pos="-.04 0 .02"/>
+      <geom class="collision" size=".06 .027 .02" pos="-.04 0 .06"/>
+      <geom class="collision" size=".05 .027 .02" pos=".07 0 .065"/>
+      <geom class="collision" size=".023 .017 .01" pos=".137 -.008 .065" quat="1 0 0 1"/>
+      <geom name="rotor1" class="rotor" pos=".14 .18 .05" mass=".25"/>
+      <geom name="rotor2" class="rotor" pos=".14 -.18 .05" mass=".25"/>
+      <geom name="rotor3" class="rotor" pos="-.14 -.18 .08" mass=".25"/>
+      <geom name="rotor4" class="rotor" pos="-.14 .18 .08" mass=".25"/>
       <geom size=".16 .04 .02" pos="0 0 0.02" type="ellipsoid" mass=".325" class="visual" material="invisible"/>
-      <site name="thrust1" pos="-.14 -.18 .05"/>
-      <site name="thrust2" pos="-.14 .18 .05"/>
-      <site name="thrust3" pos=".14 .18 .08"/>
-      <site name="thrust4" pos=".14 -.18 .08"/>
-      <site name="prop1" pos="-.1435 -.1886 .0479"/>
-      <site name="prop2" pos="-.1435 .1879 .0479"/>
-      <site name="prop3" pos=".1417 .1764 .0793"/>
-      <site name="prop4" pos=".1417 -.1766 .0793"/>
+      <site name="thrust1" pos=".14 .18 .05"/>
+      <site name="thrust2" pos=".14 -.18 .05"/>
+      <site name="thrust3" pos="-.14 -.18 .08"/>
+      <site name="thrust4" pos="-.14 .18 .08"/>
+      <site name="prop1" pos=".1435 .1886 .0479"/>
+      <site name="prop2" pos=".1435 -.1879 .0479"/>
+      <site name="prop3" pos="-.1417 -.1764 .0793"/>
+      <site name="prop4" pos="-.1417 .1766 .0793"/>
     </body>
   </worldbody>
 
