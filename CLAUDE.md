@@ -135,6 +135,15 @@ kolorowane `super_class`, 863 szkielety SWC neuronów lotu, tryby Eksploruj / Ob
 cały / mózg / VNC, wykres klas i regionów, inspektor neuronu z prawdziwymi partnerami (top 8 z edgelisty),
 wyszukiwarka, komendy drona. Wszystkie liczby prawdziwe — nie wstawiać danych z mockupów. Dane: `scripts/export_anatomy.py`, `scripts/export_viz_data.py`.
 
+## Eksplorator Next.js (`explorer/`)
+
+Następca artifactu: Next.js 16 + three.js / `@react-three/fiber`, render na GPU. Somy = jedna `THREE.Points`
+z ShaderMaterial, szkielety = jedna `LineSegments`; filtry (klasy, grupy, zakres mózg/VNC, tryb, beacon) to uniformy
+w `lib/shaders.ts`. Mieszanie alfa zwykłe z małym kryciem (nie addytywne) — użytkownik odrzucił przepalanie do bieli.
+Etykiety regionów to divy nad canvasem pozycjonowane w `useFrame` (drei `Html` gubiło etykietę mózgu).
+Dane: `npm run dev` / `build` uruchamia `scripts/sync-data.mjs`, który kopiuje `../data/viz/*.json` do `public/data`
+(ignorowane w git). Statyczny eksport `out/`.
+
 ## Uwagi do repo
 
 - `docs/prezentacja/` (NeuroFly.pptx + build.js) powstało w innej sesji; nie było weryfikowane względem wyników z v888.

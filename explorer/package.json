@@ -1,0 +1,31 @@
+{
+  "name": "neurofly-explorer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Eksplorator BANC v888 z renderem na GPU (WebGL, three.js) — NeuroFly",
+  "scripts": {
+    "sync-data": "node scripts/sync-data.mjs",
+    "predev": "node scripts/sync-data.mjs",
+    "dev": "next dev",
+    "prebuild": "node scripts/sync-data.mjs",
+    "build": "next build",
+    "build:artifact": "node scripts/build-artifact.mjs",
+    "start": "npx serve out",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.9",
+    "@react-three/fiber": "^9.3.0",
+    "next": "^16.3.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/three": "^0.186.0",
+    "typescript": "^5"
+  }
+}

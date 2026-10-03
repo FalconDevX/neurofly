@@ -20,9 +20,11 @@ Hackathon: zamknięta pętla wzrok → connectome Drosophila → sterowanie → 
 ```bash
 pip install -r requirements.txt          # banc_control + MuJoCo (domyślnie)
 python scripts/fetch_menagerie.py        # model drona Skydio X2 → third_party/
-python -m sim.viewer                     # dron Osoby 3: łopaty, regulator, WASD/Shift/Ctrl/Q/E
+python -m sim.viewer                     # dron Osoby 3: WASD/Shift/Ctrl/Q/E, Alt = stabilizacja wł./wył.
 python scripts/download_banc.py          # dane BANC v888 → data/
 ```
+
+Eksplorator BANC 3D (Next.js, render na GPU): `cd explorer && npm install && npm run dev` — szczegóły w [explorer/README.md](explorer/README.md).
 
 GPU dla symulacji BANC: `pip install torch --index-url https://download.pytorch.org/whl/cu126` (bez tego liczy na CPU).
 

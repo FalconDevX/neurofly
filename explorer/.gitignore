@@ -1,0 +1,8 @@
+node_modules/
+.next/
+out/
+out-artifact/
+next-env.d.ts
+*.tsbuildinfo
+# generowane przez scripts/sync-data.mjs z ../data/viz
+public/data/
