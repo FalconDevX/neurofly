@@ -5,6 +5,8 @@ from __future__ import annotations
 import numpy as np
 
 from .connectome import HALTERE_GROUPS, MOTOR_GROUPS, Connectome
+
+DN_GROUPS = ("dn_flight_power_L", "dn_flight_power_R", "dn_flight_steering_L", "dn_flight_steering_R")
 from .contracts import BancActivation, FlightCommand, ImuState, VisualBatch
 from .dynamics import RateDynamics
 from .readout import ManualDecoder
@@ -20,8 +22,11 @@ class BancController:
         haltere_roll_weight: float = 0.0,
         haltere_yaw_weight: float = 0.5,
         substeps: int = 4,
+        readout: str = "mn",
         **dynamics_kw,
     ) -> None:
+        """``readout``: "mn" — 6 średnich grup MN skrzydeł; "dn" — do tego każdy neuron DN lotu osobno
+        (w średnich grup informacja o stronie celu się znosi, patrz ``scripts/check_side_decoding.py``)."""
         self.c = connectome
         self.dyn = RateDynamics(connectome, **dynamics_kw)
         self.decoder = decoder or ManualDecoder()
@@ -40,6 +45,13 @@ class BancController:
         motor = [connectome.group_indices(g) for g in MOTOR_GROUPS]
         self._motor_idx = np.concatenate(motor)
         self._motor_split = np.cumsum([len(m) for m in motor])[:-1]
+        if readout not in ("mn", "dn"):
+            raise ValueError(f"readout {readout!r}: 'mn' albo 'dn'")
+        self.readout = readout
+        self._extra_idx = (np.concatenate([connectome.group_indices(g) for g in DN_GROUPS]) if readout == "dn"
+                           else np.empty(0, dtype=np.int64))
+        self._read_idx = np.r_[self._motor_idx, self._extra_idx]
+        self.decoder.ensure_features(len(MOTOR_GROUPS) + len(self._extra_idx))
         self.unmatched_ids = 0
         self._batch_ids: np.ndarray | None = None
         self._batch_idx = np.empty(0, dtype=np.int64)
@@ -73,9 +85,11 @@ class BancController:
         return ext
 
     def motor_features(self) -> np.ndarray:
-        """Średnia aktywność grup MOTOR_GROUPS (6,); z GPU kopiuje tylko motoneurony."""
-        parts = np.split(self.dyn.rates_at(self._motor_idx), self._motor_split)
-        return np.array([p.mean() if len(p) else 0.0 for p in parts])
+        """Średnia aktywność grup MOTOR_GROUPS (6,), przy ``readout="dn"`` + pojedyncze DN lotu;
+        z GPU kopiuje tylko te neurony."""
+        rates = self.dyn.rates_at(self._read_idx)
+        parts = np.split(rates[:len(self._motor_idx)], self._motor_split)
+        return np.r_[[p.mean() if len(p) else 0.0 for p in parts], rates[len(self._motor_idx):]]
 
     def _settle(self, visual: list[BancActivation], imu: ImuState | None, steps: int) -> np.ndarray:
         self.dyn.reset()

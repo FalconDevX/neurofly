@@ -12,6 +12,12 @@ samych scenach MuJoCo, leci epizody z uczeniem jak w ``train_decoder.py`` i odsy
 ΔM (4 × 6) i metryki; master dodaje ΔM do ``M`` (asynchronicznie, bez czekania na wolniejszego).
 Przez sieć nie idą klatki, więc łącze nie jest wąskim gardłem.
 
+Kontrola przed treningiem: worker zaraz po starcie (po sprawdzeniu CUDA, przed wczytaniem BANC) wysyła
+``ping``. Master czeka na ``--workers`` zgłoszeń przez ``--wait-join`` s, a potem na ich gotowość (``hello``
+po kalibracji) przez ``--wait-ready`` s. Gdy ktoś się nie zgłosi (np. slave nie odpowiada), master
+przerywa: workerzy dostają ``stop``, nic nie jest trenowane ani zapisywane, kod wyjścia 1.
+Trening rusza dopiero, gdy są wszyscy.
+
 Workerzy muszą mieć ten sam znak osi yaw z kalibracji (``yaw_axis_sign``), inaczej ich ΔM by się
 znosiły — master odrzuca niezgodnego workera. Ewaluację przed i po (stałe kąty celu, bez szumu)
 robi pierwszy wolny worker. Wynik: ``--out`` (.npz jak ``LinearDecoder.save`` + .json z przebiegiem).
@@ -53,24 +59,54 @@ class Master:
             self.M = d["M"].copy()
         self.M0 = None
         self.next_episode = 0
+        self.last_bearing = 0.0
         self.done_episodes = 0
         self.before = self.after = None
         self.eval_pending = {"before": False, "after": False}
         self.history, self.workers = [], {}
+        self.pinged: dict[str, str] = {}  # nazwa → GPU, zgłoszenia przed wczytaniem BANC
         self.finished = False
+        self.error: str | None = None  # powód przerwania
+
+    @property
+    def needed(self) -> int:
+        return getattr(self.args, "workers", 1)
+
+    def abort(self, reason: str) -> None:
+        self.error, self.finished = reason, True
+        print(f"PRZERWANO: {reason}", flush=True)
+
+    def check_deadlines(self, elapsed: float) -> None:
+        """Wywoływane co sekundę przez ``run_master``: brak workerów w czasie → przerwanie."""
+        if self.finished:
+            return
+        a = self.args
+        if len(self.pinged) < self.needed and elapsed > getattr(a, "wait_join", 120.0):
+            self.abort(f"zgłosiło się {len(self.pinged)}/{self.needed} workerów w {a.wait_join:.0f} s "
+                       f"({', '.join(self.pinged) or 'nikt'}) — sprawdź slave (IP, zapora, czy proces działa)")
+        elif len(self.workers) < self.needed and elapsed > getattr(a, "wait_ready", 900.0):
+            missing = sorted(set(self.pinged) - set(self.workers))
+            self.abort(f"gotowych {len(self.workers)}/{self.needed} workerów po {a.wait_ready:.0f} s; "
+                       f"nie skończyli startu: {', '.join(missing) or '?'}")
 
     def task(self, name: str) -> dict:
         a = self.args
         if self.finished:
-            return {"kind": "stop"}
+            return {"kind": "stop", **({"error": self.error} if self.error else {})}
+        if len(self.workers) < self.needed:  # start dopiero, gdy są wszyscy
+            return {"kind": "wait", "seconds": 2}
         if not self.eval_pending["before"]:  # ewaluacja wag startowych; inni trenują równolegle
             self.eval_pending["before"] = True
             return {"kind": "eval", "tag": "before", "M": self.M0.tolist()}
         if self.next_episode < a.episodes:
             eps = []
             for _ in range(min(a.batch, a.episodes - self.next_episode)):
+                # pary lustrzane ±b (jak train_decoder.py), żeby dekoder nie uczył się jednej strony
+                b = (float(self.rng.uniform(-a.max_bearing, a.max_bearing)) if self.next_episode % 2 == 0
+                     else -self.last_bearing)
+                self.last_bearing = b
                 eps.append({"index": self.next_episode,
-                            "bearing": float(self.rng.uniform(-a.max_bearing, a.max_bearing)),
+                            "bearing": b,
                             "beta": beta_schedule(self.next_episode, a.episodes, a.plan),
                             "seed": int(self.rng.integers(1 << 31))})
                 self.next_episode += 1
@@ -83,6 +119,14 @@ class Master:
     def handle(self, msg: dict) -> dict:
         name = msg.get("name", "?")
         kind = msg["type"]
+        if kind == "ping":
+            self.pinged[name] = msg.get("gpu", "?")
+            print(f"[{name}] zgłosił się ({msg.get('gpu', '?')}), {len(self.pinged)}/{self.needed}", flush=True)
+            if self.finished:
+                return self.task(name)
+            return {"kind": "pong"}
+        if self.finished and self.error:
+            return self.task(name)
         if kind == "hello":
             calib = msg["calib"]
             if self.ref is None:
@@ -138,8 +182,14 @@ def run_master(args) -> None:
     ips = sorted({a[4][0] for a in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)})
     print(f"master na tcp://*:{args.port}, adresy: {', '.join(ips)}; czekam na workerów", flush=True)
     master = Master(args)
+    print(f"potrzeba {master.needed} workerów: zgłoszenie w {args.wait_join:.0f} s, gotowość w {args.wait_ready:.0f} s",
+          flush=True)
     idle_since = None
+    t0 = time.time()
     while True:
+        master.check_deadlines(time.time() - t0)
+        if master.error and idle_since is None:
+            idle_since = time.time()
         if sock.poll(1000):
             msg = json.loads(sock.recv())
             try:
@@ -151,13 +201,15 @@ def run_master(args) -> None:
             idle_since = time.time() if master.finished else None
         elif master.finished and idle_since and time.time() - idle_since > 15:
             break  # pozostali workerzy dostaną "stop" przy następnym żądaniu albo wyjdą po timeoucie
+    if master.error:
+        sys.exit(1)
 
 
 # --- worker ---------------------------------------------------------------------------------------
 def run_worker(args) -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     from sim.env import summarize
-    from train_decoder import Runner, build
+    from train_decoder import Runner, build, sweep_fit
 
     name = args.name or socket.gethostname()
     import torch
@@ -168,20 +220,37 @@ def run_worker(args) -> None:
         sys.exit(f"[{name}] brak CUDA w torch {torch.__version__} (wersja CPU?). Zainstaluj wersję z CUDA:\n"
                  "    pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124\n"
                  "albo uruchom z --cpu.")
-    t0 = time.perf_counter()
-    env, bridge, ctrl, calib = build(args.plan, args.lr, args.noise, args.reward_lr, args.thrust)
-    dec = ctrl.decoder
-    print(f"[{name}] gotowy po {time.perf_counter() - t0:.0f} s, kalibracja: "
-          f"{ {k: v for k, v in calib.items() if k not in ('ok', 'scene')} }", flush=True)
-    runner = Runner(env, bridge, ctrl)
+    gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
 
     sock = zmq.Context.instance().socket(zmq.REQ)
     sock.setsockopt(zmq.RCVTIMEO, 60_000)
+    sock.setsockopt(zmq.LINGER, 0)
     sock.connect(f"tcp://{args.host}:{args.port}")
 
     def send(msg: dict) -> dict:
         sock.send(json.dumps(msg, default=float).encode())
-        return json.loads(sock.recv())
+        try:
+            return json.loads(sock.recv())
+        except zmq.Again:
+            sys.exit(f"[{name}] master {args.host}:{args.port} nie odpowiada od 60 s — przerywam")
+
+    # zgłoszenie przed wczytaniem BANC: master od razu wie, czy ten komputer jest osiągalny
+    reply = send({"type": "ping", "name": name, "gpu": gpu})
+    if reply["kind"] == "stop":
+        sys.exit(f"[{name}] master przerwał: {reply.get('error', '')}")
+    print(f"[{name}] połączony z masterem {args.host}:{args.port}, ładuję BANC…", flush=True)
+
+    t0 = time.perf_counter()
+    env, bridge, ctrl, calib = build(args.plan, args.lr, args.noise, args.reward_lr, args.thrust,
+                                     args.readout, args.visual_gain)
+    dec = ctrl.decoder
+    if not args.no_sweep:  # master bierze wagi startowe od pierwszego workera (chyba że --init)
+        fit = sweep_fit(env, bridge, ctrl)
+        print(f"[{name}] start z regresji: korelacja yaw {fit['r']:+.2f}, trafność strony {fit['side_acc']:.0%}",
+              flush=True)
+    print(f"[{name}] gotowy po {time.perf_counter() - t0:.0f} s, kalibracja: "
+          f"{ {k: v for k, v in calib.items() if k not in ('ok', 'scene')} }", flush=True)
+    runner = Runner(env, bridge, ctrl)
 
     task = send({"type": "hello", "name": name, "M": dec.M.tolist(),
                  "calib": {"yaw_axis_sign": ctrl.yaw_axis_sign, "haltere_gain": ctrl.haltere_gain,
@@ -210,6 +279,8 @@ def run_worker(args) -> None:
         task = send({"type": "result", "kind": "train", "name": name,
                      "dM": (dec.M - M).tolist(), "metrics": metrics})
     print(f"[{name}] koniec{': ' + task['error'] if task.get('error') else ''}", flush=True)
+    if task.get("error"):
+        sys.exit(1)
 
 
 # --- wspólne --------------------------------------------------------------------------------------
@@ -232,6 +303,9 @@ def main() -> None:
     ap.add_argument("--max-bearing", type=float, default=90.0)
     ap.add_argument("--init", type=Path, help="wagi startowe (.npz); domyślnie z kalibracji pierwszego workera")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--workers", type=int, default=2, help="ilu workerów musi się zgłosić (inaczej przerwanie)")
+    ap.add_argument("--wait-join", type=float, default=120.0, help="s na zgłoszenie się wszystkich workerów")
+    ap.add_argument("--wait-ready", type=float, default=900.0, help="s na wczytanie BANC i kalibrację u wszystkich")
     ap.add_argument("--out", type=Path)
     # worker
     ap.add_argument("--host", default="127.0.0.1", help="IP mastera")
@@ -239,7 +313,10 @@ def main() -> None:
     ap.add_argument("--cpu", action="store_true", help="pozwól liczyć bez GPU")
     ap.add_argument("--duration", type=float, default=5.0)
     ap.add_argument("--eval-duration", type=float, default=6.0)
-    ap.add_argument("--lr", type=float, default=0.05)
+    ap.add_argument("--lr", type=float, default=0.5, help="średni krok LMS po epizodzie")
+    ap.add_argument("--readout", choices=("mn", "dn"), default="dn", help="musi być ten sam na wszystkich workerach")
+    ap.add_argument("--visual-gain", type=float, default=1.0)
+    ap.add_argument("--no-sweep", action="store_true", help="bez startu z regresji na statycznych scenach")
     ap.add_argument("--noise", type=float, default=0.1)
     ap.add_argument("--reward-lr", type=float, default=0.05)
     ap.add_argument("--thrust", choices=("banc", "hold"), default="hold")

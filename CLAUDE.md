@@ -39,7 +39,9 @@ wizualizację — została odrzucona („pseudo sieć, nie przypomina BANC”) i
   domyślny gdy jest CUDA) lub `"cpu"` (scipy, float64); zgodność GPU/CPU ~1e-7, test `test_gpu_matches_cpu`.
   `rates_at(idx)` kopiuje z GPU tylko wybrane neurony; `BancController.motor_features()` czyta tylko MN.
 - `readout.py` — średnia aktywność 6 grup MN → komendy. Dekodery = Plany z Miro: C `ManualDecoder`, B `LinearDecoder` (LMS),
-  A `AdaptiveDecoder` (node perturbation z nagrodą).
+  A `AdaptiveDecoder` (node perturbation z nagrodą). `BancController(readout="dn")`: za 6 średnimi MN idą pojedyncze
+  neurony DN lotu (375, `DN_GROUPS`), kolumny DN w macierzy ręcznej = 0, wagi tylko z treningu; `ensure_features`,
+  `load_weights` sprawdza rozmiar. `fit_step(apply=False)` + `apply_pending()` = jeden krok LMS po epizodzie.
 - `controller.py` — `BancController.step(visual, imu)`; kalibracje w kolejności: `calibrate_rest(visual=scena neutralna)`,
   `calibrate_scale(bodźce)`, `calibrate_yaw_sign(turn_right, turn_left)` (znak osi yaw z odruchu optomotorycznego
   na sekwencjach obrotu; odwraca `decoder.M[3]`, `yaw_axis_sign`), `calibrate_haltere_sign()` (osobne znaki
@@ -50,6 +52,15 @@ wizualizację — została odrzucona („pseudo sieć, nie przypomina BANC”) i
   Dekoder: `save(path)` / `load_weights(path)` (po kalibracji), LMS Planu B jest znormalizowany (NLMS).
 - `stubs.py` — `FakeVision` (pobudza `visual_projection` L/R wg kierunku beacona), `ToyDrone` (1-osiowa fizyka).
 - `scripts/export_viz_data.py`, `scripts/export_anatomy.py` — dane do wizualizacji (`data/viz/`).
+- `scripts/check_side_decoding.py` — czy z aktywności BANC da się odczytać stronę celu (statyczne sceny `DroneEnv`).
+- `scripts/train_decoder.py` (`--readout dn` domyślnie): start wiersza yaw z regresji na statycznych scenach (`sweep_fit`),
+  potem lot: wagi stałe w epizodzie, krok po epizodzie, cele w parach ±b, ewaluacja co `--eval-every`.
+  `scripts/train_distributed.py` — to samo na kilku GPU w LAN (master + workerzy ZMQ; worker sprawdza CUDA).
+  Master czeka na `--workers` (domyślnie 2) zgłoszeń `ping` przez `--wait-join` s i na ich gotowość przez `--wait-ready` s;
+  jeśli slave nie odpowiada — przerwanie (workerzy dostają `stop`, nic nie zapisane, kod 1).
+- `sim/brain_panel.py` — `python -m sim.viewer --brain [--brain-decoder …]` (.venv312): przy locie WASD prawy panel
+  z BANC na żywo (somy z przodu kolorowane zmianą aktywności, grupy lotu L/P, komenda dekodera); sieć nie steruje.
+  Rysowanie: `BrainView`, też w wideo: `fly_banc.py --local --brain --video …` (dron + oczy + panel BANC).
 
 Integracja (w `visual_pipeline/`, ale wspólna z Osobą 2 i 3):
 - `zmq_protocol.py` — protokół symulator ↔ serwer (REQ/REP, `[nagłówek JSON, klatka L, klatka P]`), lekki (numpy + pyzmq).
@@ -72,6 +83,8 @@ Nasze założenia (zawsze mów o nich wprost, nie przedstawiaj jako wyników BAN
 - znak osi yaw dekodera dobierany z odruchu optomotorycznego (`calibrate_yaw_sign`), nie z anatomii,
 - przełożenie MN → dron: thrust ← średnia wing_power, roll ← wing_power L−R, yaw ← wing_steering L−R,
   pitch ← brak (trim w Planie C, uczony w A/B). Wzmocnienia Planu C: (0.2, 1, 1, 1).
+- odczyt yaw z pojedynczych DN lotu (`readout="dn"`) i jego wagi z treningu z nauczycielem (Plan B) — liniowy dekoder
+  jest nasz, BANC tylko dostarcza aktywność DN.
 
 ## Wyniki na pełnym BANC v888 (175 401 neuronów, 1 534 828 krawędzi w grafie)
 
@@ -97,6 +110,20 @@ Nasze założenia (zawsze mów o nich wprost, nie przedstawiaj jako wyników BAN
   w pętli otwartej cel z lewej yaw −0.39, z prawej −0.06). Podmuch: haltery tłumią obrót, kurs nie wraca (24°).
 - `--thrust banc`: thrust 0.3–0.46 w locie, dron dotyka ziemi po ~4.5 s.
 
+### Diagnoza oczu i odczytu (2026-10-03, oczy na nosie drona — commit Osoby 3)
+- Kamery i FlyVis są w porządku: cel z lewej widzi lewe oko, z prawej prawe, zmiana wejścia głównie po stronie celu.
+- **Ograniczenie danych v888:** lewy płat wzrokowy ma dużo mniej neuronów z `cell_type` (np. Tm1 L 2 / P 807,
+  T4a 276 / 805), choć neuronów jest podobnie (optic_lobe_intrinsic 29 224 L / 36 405 P). Mapa FlyVis→BANC Osoby 1
+  idzie po typach, więc lewe oko zasila 5 535 neuronów, prawe 16 927. Wyrównanie wejścia (×3) nie zmieniło wyniku.
+- **Średnie 6 grup MN nie odróżniają strony celu** (L−R ±0.5%, ten sam znak dla celu z obu stron). Strona jest w
+  pojedynczych neuronach: `check_side_decoding.py`, regresja z walidacją „bez jednej odległości”, trafność strony:
+  6 średnich MN 68%, MN pojedynczo 84%, **DN lotu pojedynczo 99%** (korelacja kąta 0.88), VPN 94% (gain 1).
+  `visual_gain` 30/100 poprawia 6 średnich MN do 91%, DN bez zmian → zostajemy przy gain 1.
+- Dekoder `readout="dn"` (`data/decoders/planB_dn.npz`, 120 epizodów, `--thrust hold`): sam start z regresji
+  23.2° / 4 z 4 w stronę celu, po treningu 17.9° / 4 z 4 (wcześniej 6 MN: 45–53°, 2–3 z 4).
+  `fly_banc.py --local --decoder data/decoders/planB_dn.npz`: zawis 1.7°, cel +60° → 7° (ustalone po 6 s),
+  −60° → 21°, podmuch maks. 35° → wraca do 1.5° po 3.9 s. Wideo: `data/videos/demo_planB_dn.mp4`.
+
 ## Plan domknięcia (ustalony 2026-10-03, idziemy według niego)
 
 Zrobione wcześniej: ID v888 uzgodnione z Osobą 1 (`unmatched_ids = 0`), dynamika na GPU, oczy MuJoCo i most ZMQ (Osoba 1).
@@ -113,9 +140,8 @@ Zrobione wcześniej: ID v888 uzgodnione z Osobą 1 (`unmatched_ids = 0`), dynami
 **Etap 2 — zachowanie**
 - [x] O2: znak yaw z obrotu (`calibrate_yaw_sign`), wpięty w kalibrację serwera (syntetyczną i z symulatora).
 - [x] O2: haltery: osobne znaki roll/yaw, domyślnie tylko yaw_rate.
-- [~] O2+O3: **wariant demo (Plan C):** angle mode działa i jest stabilny, ale z prawdziwym FlyVis **nie skręca do celu**
-  (cel ±60° zostaje ~60°), a thrust z BANC jest stale < 0.5 (dron opada w 4–5 s) → demo na `--thrust hold`.
-  Trening dekodera: `scripts/train_decoder.py --plan B|A` (wyniki niżej).
+- [x] O2+O3: **skręt do celu:** Plan C (6 średnich MN) nie skręca, Plan B z odczytem DN (`--readout dn`) skręca
+  w obie strony i wraca po podmuchu (wyniki wyżej). Thrust z BANC dalej < 0.5 → demo na `--thrust hold`.
 - [ ] O1/O2: potwierdzić z FlyVis: `scripts/check_optomotor.py` po kalibracji ma „hamuje obrót”, `run_closed_loop.py` bez ciągłego obrotu.
 
 **Etap 3 — demo i prezentacja**

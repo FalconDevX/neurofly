@@ -51,3 +51,28 @@ def test_master_sums_worker_updates_and_saves(tmp_path):
     d = np.load(tmp_path / "w.npz")
     np.testing.assert_allclose(d["M"], m.M)
     assert [e["index"] for e in m.history] == [0, 1, 2, 3, 4, 5] or len(m.history) == 6
+
+
+def test_master_waits_for_all_workers_and_aborts_without_slave(tmp_path):
+    from train_distributed import Master
+
+    a = _args(tmp_path)
+    a.workers, a.wait_join, a.wait_ready = 2, 120.0, 900.0
+    m = Master(a)
+    assert m.handle({"type": "ping", "name": "A", "gpu": "RTX"})["kind"] == "pong"
+    assert m.handle(_hello("A"))["kind"] == "wait"  # B jeszcze nie ma — nie startujemy
+    m.check_deadlines(60.0)
+    assert not m.finished
+    m.check_deadlines(121.0)  # slave nie zgłosił się w czasie
+    assert m.finished and "1/2" in m.error
+    reply = m.handle({"type": "poll", "name": "A"})
+    assert reply["kind"] == "stop" and reply["error"]
+    assert not (tmp_path / "w.npz").exists()  # nic nie zapisano
+
+    m = Master(a)  # obaj są → trening rusza
+    for n in ("A", "B"):
+        m.handle({"type": "ping", "name": n})
+    assert m.handle(_hello("A"))["kind"] == "wait"
+    assert m.handle(_hello("B"))["kind"] == "eval"
+    m.check_deadlines(1000.0)
+    assert not m.finished

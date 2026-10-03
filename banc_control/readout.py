@@ -7,6 +7,11 @@ Przełożenie na osie quadcoptera to NASZA decyzja projektowa (nie wynik z BANC)
   yaw    ← asymetria MN sterujących L − R
   pitch  ← brak ręcznego mapowania (w Planie C stały trim); uczony w Planach A/B
 
+Odczyt ``readout="dn"`` w ``BancController``: za 6 grupami MN idą pojedyncze neurony DN lotu
+(oficjalne super_cluster flight power / steering). Średnie grup MN nie odróżniają celu z lewej
+od celu z prawej, pojedyncze DN tak (``scripts/check_side_decoding.py``). Kolumny DN mają w macierzy
+ręcznej zera — ich wagi pochodzą z treningu (``train_decoder.py --readout dn``).
+
 Trzy dekodery = Plany z tablicy Miro:
   Plan C  ManualDecoder   — ręcznie skalibrowane wzmocnienia, zero uczenia (gwarantowane demo)
   Plan B  LinearDecoder   — BANC/VNC stałe, uczy się tylko mała warstwa liniowa (LMS)
@@ -53,6 +58,16 @@ class ManualDecoder:
         self.baseline = np.zeros(len(MOTOR_GROUPS))
         self.scale = np.ones(len(MOTOR_GROUPS))
 
+    def ensure_features(self, n: int) -> None:
+        """Dopasowuje dekoder do ``n`` cech (6 MN + dodatkowe neurony); nowe kolumny M = 0."""
+        extra = n - self.M.shape[1]
+        if extra < 0:
+            raise ValueError(f"dekoder ma {self.M.shape[1]} cech, odczyt kontrolera {n}")
+        if extra:
+            self.M = np.hstack([self.M, np.zeros((len(AXES), extra))])
+            self.baseline = np.r_[self.baseline, np.zeros(extra)]
+            self.scale = np.r_[self.scale, np.ones(extra)]
+
     def calibrate(self, resting_features: np.ndarray) -> None:
         self.baseline = resting_features.copy()
 
@@ -60,7 +75,10 @@ class ManualDecoder:
         """Normalizuje każdą grupę MN do max |odchylenia od baseline| na bodźcach referencyjnych.
         Na pełnym BANC aktywność MN jest rzędu 1e-3, więc bez tego komendy byłyby ~0."""
         dev = np.abs(np.array(stimulus_features) - self.baseline).max(axis=0)
-        self.scale = np.where(dev > 1e-9, dev, 1.0)
+        n = len(MOTOR_GROUPS)
+        self.scale = np.r_[np.where(dev[:n] > 1e-9, dev[:n], 1.0),
+                           # pojedyncze neurony: bez odpowiedzi na bodźce → cecha wyłączona (inf → 0)
+                           np.where(dev[n:] > 1e-12, dev[n:], np.inf)]
 
     def normalized(self, features: np.ndarray) -> np.ndarray:
         return (features - self.baseline) / self.scale
@@ -78,6 +96,8 @@ class ManualDecoder:
         """Wczytuje ``M`` i trymy z ``save``. Wywoływać PO kalibracji: ``calibrate_yaw_sign`` odwraca
         ``M[3]``, a wyuczona macierz ma już znak yaw z kalibracji, przy której była uczona."""
         d = np.load(path)
+        if d["M"].shape != self.M.shape:
+            raise ValueError(f"wagi {path}: M {d['M'].shape}, dekoder {self.M.shape} — inny odczyt (--readout mn/dn)?")
         self.M = d["M"].copy()
         self.hover_thrust, self.pitch_trim = float(d["hover_thrust"]), float(d["pitch_trim"])
 
@@ -88,16 +108,31 @@ class LinearDecoder(ManualDecoder):
     def __init__(self, lr: float = 0.05, **kw) -> None:
         super().__init__(**kw)
         self.lr = lr
+        self._pending: np.ndarray | None = None
+        self._pending_n = 0
 
-    def fit_step(self, features: np.ndarray, target: FlightCommand) -> float:
+    def fit_step(self, features: np.ndarray, target: FlightCommand, apply: bool = True) -> float:
+        """``apply=False``: krok tylko zbierany, ``apply_pending`` nakłada średni krok (np. po epizodzie).
+        Przy aktualizacji co klatkę dekoder douczał się w trakcie lotu do celu, który podaje nauczyciel,
+        więc w treningu wyglądał dobrze, a zamrożony (ewaluacja) nie skręcał."""
         x = self.normalized(features)
         pred = self.M @ x
         tgt = np.array([target.thrust - self.hover_thrust, target.roll, target.pitch - self.pitch_trim, target.yaw])
         err = tgt - pred
         # Znormalizowany LMS: w locie cechy potrafią wyjść daleko poza skalę z kalibracji,
         # a zwykły LMS przy dużym |x| się rozbiega.
-        self.M += self.lr * np.outer(err, x) / (1.0 + x @ x)
+        step = np.outer(err, x) / (1.0 + x @ x)
+        if apply:
+            self.M += self.lr * step
+        else:
+            self._pending = step if self._pending is None else self._pending + step
+            self._pending_n += 1
         return float((err ** 2).mean())
+
+    def apply_pending(self) -> None:
+        if self._pending is not None:
+            self.M += self.lr * self._pending / self._pending_n
+        self._pending, self._pending_n = None, 0
 
 
 class AdaptiveDecoder(LinearDecoder):

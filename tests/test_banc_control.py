@@ -207,3 +207,43 @@ def test_haltere_gain_calibration_hits_target():
     base = ctrl._raw_command([], None, 30)[3]
     yaw = ctrl._raw_command([], ImuState(gyro=(0.0, 0.0, 1.0)), 30)[3]
     assert abs(yaw - base) == pytest.approx(0.3, rel=0.1)
+
+
+def test_dn_readout_adds_single_dn_features_and_checks_weights(tmp_path):
+    from banc_control.readout import LinearDecoder
+
+    c = Connectome.from_banc_tables(*mini_banc())
+    ctrl = BancController(c, decoder=LinearDecoder(), readout="dn")
+    n_dn = sum(len(c.group_indices(g)) for g in ("dn_flight_power_L", "dn_flight_power_R"))
+    assert n_dn == 2 and ctrl.decoder.M.shape == (4, 6 + n_dn)
+    np.testing.assert_array_equal(ctrl.decoder.M[:, 6:], 0.0)  # kolumny DN tylko z treningu
+    ctrl.calibrate_rest(visual=[])
+    from banc_control.contracts import BancActivation
+
+    left = [BancActivation(int(c.root_ids[c.group_indices("visual_L")[0]]), "LC4", 1.0)]
+    ctrl.dyn.reset()
+    for _ in range(20):
+        ctrl.step(left)
+    f = ctrl.motor_features()
+    assert f.shape == (8,) and f[6] > f[7]  # DN lewy (kolejność grup: power_L, power_R) mocniej
+
+    ctrl.decoder.save(tmp_path / "dn.npz")
+    mn = BancController(c, decoder=LinearDecoder())
+    with pytest.raises(ValueError):
+        mn.decoder.load_weights(tmp_path / "dn.npz")
+
+
+def test_lms_pending_keeps_weights_fixed_until_applied():
+    from banc_control.readout import LinearDecoder
+
+    dec = LinearDecoder(lr=0.5)
+    M0 = dec.M.copy()
+    x = np.array([0.0, 0.0, 1.0, -1.0, 0.0, 0.0])
+    for _ in range(10):
+        dec.fit_step(x, FlightCommand(thrust=0.5, yaw=1.0), apply=False)
+    np.testing.assert_array_equal(dec.M, M0)  # w trakcie epizodu bez zmian
+    dec.apply_pending()
+    assert abs(dec.M[3] @ x - 1.0) < abs(M0[3] @ x - 1.0)  # po epizodzie krok w stronę celu
+    M1 = dec.M.copy()
+    dec.apply_pending()  # bez nowych kroków nic się nie dzieje
+    np.testing.assert_array_equal(dec.M, M1)
