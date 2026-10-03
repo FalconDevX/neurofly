@@ -171,6 +171,11 @@ python scripts/vision_server.py --decoder data/decoders/planB.npz
   prawdziwego kierunku do celu.
 - Klawisze w `sim.viewer` i `sim.run_env`: **C** = panel czujników (odczyt | prawda), **M** = panel metryk.
   Przy włączonym C nad dronem strzałki: pomarańczowa = odczyt GPS, zielona = prawdziwy kierunek do celu.
+- Bloki (`sim/blocks.py`): większe (kostki do 3 m, filary 3–6 m, ściany do 6 m szerokości, wieże do ~8 m),
+  60–85 na świat (średnio ~70). ~15 % filarów/ścian/wież jest **wysokich** (9.5–13 m, ponad granicę planszy 8 m — trzeba
+  ominąć); zwykłe zostawiają >= 1.5 m nad szczytem, bloków „prawie do przelecenia” nie ma. ~30 % zwykłych stoi
+  **pochylonych** (30–80° do podłoża, obrót całego ciała — kolizje działają). Podstawa zawsze >= 0.3 m w ziemi
+  (blok obniżony o najwyżej uniesiony róg podstawy), więc żaden blok nie wisi w powietrzu.
 - Opóźnienie silników: `RateController(motor_tau=...)` — siła silnika dochodzi do zadanej z tą stałą czasową
   (filtr 1. rzędu, jak rozpędzające się śmigło). `MOTOR_TAU = 0.04` s; `WorldEnv(motor_tau=0.0)` domyślnie (zgodność),
   `sim.viewer` / `sim.run_env` domyślnie 0.04 (`--motor-tau`; z `--banc` 0). Zmierzone: ciąg 63 % po τ, stabilizacja

@@ -193,8 +193,34 @@ def test_world_guarantees(beacon_model, seed):
     assert not any(x2 in (m.geom_bodyid[c.geom1], m.geom_bodyid[c.geom2]) for c in d.contact[:d.ncon])
 
 
+_BOX_SIGNS = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], float)
+
+
+def _block_parts(m, d, i):
+    """[(geom id, narożniki w świecie (8, 3), czy stoi na gruncie)] używanych części bloku i."""
+    from sim import blocks
+
+    out = []
+    for k in range(blocks.PARTS):
+        g = m.geom(f"block{i}_part{k}").id
+        size = m.geom_size[g]
+        if size.max() < 0.01:  # nieużyta część
+            continue
+        world = d.geom_xpos[g] + (_BOX_SIGNS * size) @ d.geom_xmat[g].reshape(3, 3).T
+        out.append((g, world, m.geom_pos[g][2] - size[2] <= -blocks.SINK + 1e-6))
+    return out
+
+
+def _terrain_z(m, x, y):
+    hid = m.hfield("terrain").id
+    n, half = m.hfield_nrow[hid], m.hfield_size[hid, 0]
+    j, i = (int(round((v + half) / (2 * half) * (n - 1))) for v in (x, y))
+    return m.hfield_data[m.hfield_adr[hid] + i * n + j] * m.hfield_size[hid, 2] - 1
+
+
 @pytest.mark.parametrize("seed", range(3))
-def test_blocks_keep_clear_of_start_and_target(beacon_model, seed):
+def test_blocks_keep_clear_and_stand_on_ground(beacon_model, seed):
+    """Start i cel wolne; szczyt albo do przelecenia, albo wyraźnie ponad granicą; podstawa zawsze w ziemi."""
     from sim import blocks
     from sim.terrain import WALL_HEIGHT, randomize
 
@@ -203,37 +229,76 @@ def test_blocks_keep_clear_of_start_and_target(beacon_model, seed):
     randomize(m, d, seed)
     start(m, d)
     tx, ty, _ = m.body_pos[m.body("target").id]
-    placed = 0
+    placed = tall = tilted = 0
     for i in range(blocks.POOL_SIZE):
-        if m.body_pos[m.body(f"block{i}").id][2] <= blocks.HIDDEN_Z + 1:
+        b = m.body(f"block{i}").id
+        if m.body_pos[b][2] <= blocks.HIDDEN_Z + 1:
             continue
         placed += 1
-        for k in range(blocks.PARTS):
-            g = m.geom(f"block{i}_part{k}").id
-            if m.geom_size[g].max() < 0.01:  # nieużyta część
-                continue
-            reach = np.hypot(*m.geom_size[g][:2])
-            x, y, z = d.geom_xpos[g]
-            assert np.hypot(x, y) - reach >= blocks.START_CLEARANCE - 0.05
-            assert np.hypot(x - tx, y - ty) - reach >= blocks.TARGET_CLEARANCE - 0.05
-            assert z + m.geom_size[g][2] <= WALL_HEIGHT - blocks.TOP_CLEARANCE + 0.05
+        tilted += d.xmat[b][8] < np.cos(np.deg2rad(5))
+        parts = _block_parts(m, d, i)
+        corners = np.vstack([c for _, c, _ in parts])
+        assert np.hypot(corners[:, 0], corners[:, 1]).min() >= blocks.START_CLEARANCE - 0.05
+        assert np.hypot(corners[:, 0] - tx, corners[:, 1] - ty).min() >= blocks.TARGET_CLEARANCE - 0.05
+        top = corners[:, 2].max()
+        tall += top > WALL_HEIGHT
+        assert top <= WALL_HEIGHT - blocks.TOP_CLEARANCE + 0.05 or top >= WALL_HEIGHT + blocks.TALL_MARGIN - 0.05
+        for _, c, grounded in parts:  # dolne narożniki części stojących na gruncie: pod ziemią
+            if grounded:
+                for p in c[np.argsort(c[:, 2])[:4]]:
+                    assert p[2] <= _terrain_z(m, p[0], p[1]) + 0.02
     assert blocks.COUNT[0] * 0.8 <= placed <= blocks.COUNT[1]
+    assert tilted > 0
+
+
+def test_some_blocks_tall_and_tilted(beacon_model):
+    from sim import blocks
+    from sim.terrain import WALL_HEIGHT, randomize
+
+    m = beacon_model
+    d = mujoco.MjData(m)
+    tall = tilted = 0
+    for seed in range(5):
+        randomize(m, d, seed)
+        start(m, d)
+        for i in range(blocks.POOL_SIZE):
+            b = m.body(f"block{i}").id
+            if m.body_pos[b][2] <= blocks.HIDDEN_Z + 1:
+                continue
+            tilt = np.degrees(np.arccos(np.clip(d.xmat[b][8], -1, 1)))
+            tilted += tilt > 5
+            assert tilt <= 90 - blocks.TILT_GROUND_ANGLE[0] + 0.5  # najwyżej 60° od pionu (30° do podłoża)
+            tall += max(c[:, 2].max() for _, c, _ in _block_parts(m, d, i)) > WALL_HEIGHT
+    assert tall >= 3 and tilted >= 10
 
 
 def test_drone_collides_with_block(beacon_model):
-    """Regresja: bvh_aabb z kompilacji gubił kolizje z przestawionymi częściami (obwiednia puli)."""
+    """Regresja: bvh_aabb z kompilacji gubił kolizje z przestawionymi częściami (obwiednia puli),
+    także po pochyleniu bloku (obrót całego ciała)."""
     from sim import blocks
     from sim.terrain import randomize
 
     m = beacon_model
     d = mujoco.MjData(m)
-    randomize(m, d, 2)
+    randomize(m, d, 3)
     start(m, d)
-    i = next(i for i in range(blocks.POOL_SIZE) if m.body_pos[m.body(f"block{i}").id][2] > blocks.HIDDEN_Z + 1)
-    g = m.geom(f"block{i}_part0").id
-    d.qpos[:3] = d.geom_xpos[g]
-    mujoco.mj_forward(m, d)
-    assert any(g in (c.geom1, c.geom2) for c in d.contact[:d.ncon])
+    checked = set()
+    for i in range(blocks.POOL_SIZE):
+        b = m.body(f"block{i}").id
+        if m.body_pos[b][2] <= blocks.HIDDEN_Z + 1:
+            continue
+        kind = "pochylony" if d.xmat[b][8] < np.cos(np.deg2rad(5)) else "pionowy"
+        if kind in checked:
+            continue
+        g = m.geom(f"block{i}_part0").id
+        point = d.geom_xpos[g] + d.geom_xmat[g].reshape(3, 3)[:, 2] * m.geom_size[g][2] * 0.5  # nad ziemią
+        start(m, d)
+        d.qpos[:3] = point
+        mujoco.mj_forward(m, d)
+        assert any(g in (c.geom1, c.geom2) for c in d.contact[:d.ncon]), kind
+        checked.add(kind)
+        start(m, d)
+    assert checked == {"pochylony", "pionowy"}
 
 
 def test_outside_arena(beacon_model):
