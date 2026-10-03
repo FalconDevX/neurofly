@@ -4,9 +4,15 @@ flygym's compound-eye map is a flat-top hex lattice drawn in image pixels; FlyVi
 axial hex coordinates (u, v) with the same flat-top orientation (hex_to_pixel "default").
 We take each ommatidium's pixel centroid, rescale to FlyVis units and round to (u, v).
 
-Orientation is verified against FlyVis' training renderer (BoxEye) in
-scripts/check_retina_orientation.py: r = 0.996 for this mapping vs <= 0.16 for the other
-11 lattice symmetries. The left eye is the horizontal mirror of the right (bilateral symmetry).
+The unmirrored mapping reproduces FlyVis' training renderer (BoxEye): r = 0.996 vs <= 0.16
+for the other 11 lattice symmetries (scripts/check_retina_orientation.py).
+
+FlyVis' lattice is the eye seen from outside: for a right eye, anterior is on the image
+right. A camera looks from inside, so the right camera puts anterior on the image left.
+Motion tests (scripts/check_motion_directions.py) confirm it: unmirrored, T4a/T5a prefer
+back-to-front motion; mirrored, T4a/b/c and T5a/b/c/d match their anatomical directions
+(a front-to-back, b back-to-front, c up, d down). So the right eye is mirrored and the left
+eye (whose camera already has anterior on the image right) is not.
 """
 import numpy as np
 from flygym import assets_dir
@@ -40,7 +46,7 @@ class RetinaMapper:
         flyvis_u, flyvis_v = get_hex_coords(EXTENT)
         flyvis_index = {(a, b): i for i, (a, b) in enumerate(zip(flyvis_u, flyvis_v))}
 
-        for eye, sign in (("right", 1.0), ("left", -1.0)):
+        for eye, sign in (("right", -1.0), ("left", 1.0)):
             u, v = pixel_to_hex(sign * x * scale, y * scale)
             u, v = np.rint(u).astype(int), np.rint(v).astype(int)
             try:

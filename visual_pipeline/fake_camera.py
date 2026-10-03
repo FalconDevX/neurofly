@@ -3,7 +3,7 @@
 Konwencje jak w ``banc_control.stubs``: azymut i kurs + = w prawo, roll + = prawe skrzydło
 w dół. Każde oko to rzut równoprostokątny (azymut × elewacja) o rozmiarze, jakiego oczekuje
 flygym Retina. Kamery mają naturalny układ obrazu: prawa patrzy w prawo, więc przód widzi
-po lewej stronie kadru, lewa odwrotnie; ``RetinaMapper`` odbija lewe oko, co daje spójny obraz.
+po lewej stronie kadru, lewa odwrotnie; ``RetinaMapper`` odbija prawe oko do konwencji FlyVis.
 """
 
 from __future__ import annotations
