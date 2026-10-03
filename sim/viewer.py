@@ -77,6 +77,7 @@ CHASE_DISTANCE = 1.5     # m na starcie (kółko myszy zmienia)
 CHASE_FOLLOW_TIME = 0.25  # s, stała czasowa obrotu kamery za kursem drona (wygładzanie niezależne od FPS)
 EYES_HEIGHT = (120, 240)  # px, wysokość podglądu oczu: ~1/3 wysokości sceny w tych granicach
 EYES_EVERY = 2     # co ile klatek odświeżać podgląd oczu (60 / 2 = 30 Hz; całość w osobnym wątku)
+FLY_EVERY = 3      # co ile odświeżeń oczu przeliczać widok ommatidiów muszki (~40 ms na parę oczu)
 WIND_SIZE = 160    # px, kwadrat ze strzałką wiatru w prawym dolnym rogu sceny
 
 
@@ -165,8 +166,37 @@ class EyesWorker:
                 self._busy = False
 
 
+class FlyEyeView:
+    """„Co widzi muszka”: klatka kamery-oka → korekcja rybiego oka → 721 ommatidiów (FlyGym Retina) → obraz
+    heksagonów w jasności (to samo, co dostaje FlyVis). Bez FlyGym (środowisko bez wzroku) — wyłączone."""
+
+    def __init__(self):
+        try:
+            from flygym.vision.retina import Retina
+
+            from visual_pipeline.frames import prepare_frame, to_luminance
+        except Exception:  # brak flygym / wag — podgląd bez widoku muszki
+            self.retina = None
+            return
+        self.retina, self._prep, self._lum = Retina(), prepare_frame, to_luminance
+        ones = np.asarray(self.retina.hex_pxls_to_human_readable(np.ones((721, 2)))).max(axis=2)
+        self.inside = ones > 0  # obrys oka (sześciokąt)
+
+    def render(self, frame, label):
+        r = self.retina
+        hexp = np.asarray(r.raw_image_to_hex_pxls(r.correct_fisheye(self._lum(self._prep(frame))))).max(1, keepdims=True)
+        img = np.asarray(r.hex_pxls_to_human_readable(np.repeat(hexp, 2, axis=1))).max(axis=2)
+        v = np.clip(img / max(float(hexp.max()), 1e-6), 0, 1)
+        lo, hi = np.array([24, 24, 27], np.float32), np.array([45, 212, 191], np.float32)
+        out = np.where(self.inside[..., None], lo + (hi - lo) * v[..., None], np.array([9, 9, 11], np.float32))
+        out = out.astype(np.uint8)
+        cv2.putText(out, label, (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (250, 250, 250), 2, cv2.LINE_AA)
+        return out
+
+
 class Overlays:
     """Obrazy na scenie: oczy drona (lewy dolny róg) i strzałka wiatru (prawy dolny róg).
+    Obok kamer (gdy jest FlyGym): to samo jako ommatidia muszki — „co widzi muszka”, dwoje oczu.
 
     viewer.set_images zastępuje wszystkie obrazy naraz, więc oba idą w jednym wywołaniu.
     """
@@ -176,6 +206,8 @@ class Overlays:
         self.brain = brain  # BrainPanel (--brain) albo None
         self.eyes = None  # MujocoEyes tworzony dopiero, gdy nie dostajemy gotowych klatek
         self.eyes_image = None
+        self.fly = FlyEyeView()  # widok ommatidiów obok kamer (None-retina = wyłączony)
+        self.fly_images, self.fly_count = None, 0  # ~40 ms na parę oczu → przeliczane co FLY_EVERY odświeżeń
 
     def update(self, viewer, data, wind, refresh_eyes, frames=None):
         """frames: gotowe klatki oczu (lewa, prawa), np. obs["eyes"] z WorldEnv; None = renderuj tutaj."""
@@ -185,7 +217,10 @@ class Overlays:
         images = []
         # oczy: ~1/3 wysokości sceny, ale zmniejszone tak, żeby zmieściły się obok strzałki wiatru
         free_width = view.width - (WIND_SIZE + 8 if wind.enabled else 0)
-        height = int(min(np.clip(view.height // 3, *EYES_HEIGHT), (free_width - 4) / 2 * EYE_H / EYE_W))
+        if self.brain is not None and self.brain.image is not None:
+            free_width -= int(view.width * 0.4)  # panel sieci po prawej
+        n_img = 4 if self.fly.retina is not None else 2  # kamery L, P (+ oczy muszki L, P)
+        height = int(min(np.clip(view.height // 3, *EYES_HEIGHT), (free_width - 4 * n_img) / n_img * EYE_H / EYE_W))
         width = round(EYE_W * height / EYE_H)
         if height >= 60 and view.height >= height:
             if refresh_eyes or self.eyes_image is None or self.eyes_image.shape[0] != height:
@@ -195,8 +230,16 @@ class Overlays:
                     frames = self.eyes.render(data)
                 left, right = (cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA) for img in frames)
                 gap = np.full((height, 4, 3), 255, np.uint8)  # biały pasek między okiem lewym i prawym
-                self.eyes_image = np.hstack([left, gap, right])
-            images.append((mujoco.MjrRect(view.left, view.bottom, 2 * width + 4, height), self.eyes_image))
+                parts = [left, gap, right]
+                if self.fly.retina is not None:  # dwoje oczu muszki: 721 ommatidiów na oko
+                    if self.fly_images is None or self.fly_count % FLY_EVERY == 0:
+                        self.fly_images = [self.fly.render(f, lab) for f, lab in zip(frames, ("muszka L", "muszka P"))]
+                    self.fly_count += 1
+                    fl, fr = (cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA) for img in self.fly_images)
+                    dark = np.full((height, 4, 3), 9, np.uint8)
+                    parts += [np.full((height, 8, 3), 255, np.uint8), fl, dark, fr]
+                self.eyes_image = np.hstack(parts)
+            images.append((mujoco.MjrRect(view.left, view.bottom, self.eyes_image.shape[1], height), self.eyes_image))
         if self.brain is not None and self.brain.image is not None:
             # panel sieci przy prawej krawędzi okna (panel ustawień MuJoCo schowany, Shift+Tab go przywraca),
             # na całą wysokość nad strzałką wiatru, najwyżej 40% szerokości sceny
