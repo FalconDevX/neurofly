@@ -86,7 +86,7 @@ def clear_corridor(env, width: float = 3.0) -> int:
             continue
         t = np.clip(np.dot(pos[:2] - start, seg) / max(np.dot(seg, seg), 1e-9), 0.0, 1.0)
         if np.linalg.norm(pos[:2] - start - t * seg) < width + blocks.ENVELOPE_RADIUS:
-            env.model.body_pos[body] = (0, 0, blocks.HIDDEN_Z)
+            blocks.hide(env.model, body)  # pod ziemię, maleńki i niewidoczny
             hidden += 1
     mujoco.mj_forward(env.model, env.data)
     return hidden

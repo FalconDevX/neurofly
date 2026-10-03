@@ -105,8 +105,9 @@ def randomize(model, data, seed=None):
 
     if blocks.has_pool(model):
         def ground(x, y):
-            j = int(round((x + half_x) / (2 * half_x) * (ncol - 1)))
-            i = int(round((y + half_y) / (2 * half_y) * (nrow - 1)))
+            """Wysokość terenu [m] w (x, y) — liczby albo tablice (wiele punktów naraz)."""
+            j = np.clip(np.rint((np.asarray(x) + half_x) / (2 * half_x) * (ncol - 1)).astype(int), 0, ncol - 1)
+            i = np.clip(np.rint((np.asarray(y) + half_y) / (2 * half_y) * (nrow - 1)).astype(int), 0, nrow - 1)
             return height[i, j]
         blocks.place(model, rng, ground, half_x, START, (tx, ty), WALL_HEIGHT)
     mujoco.mj_forward(model, data)

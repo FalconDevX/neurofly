@@ -7,7 +7,8 @@ z jednym modelem, więc:
   bloki chowa głęboko pod terenem.
 
 Rodzaje (rozmiary losowane w zakresach): kostka, filar, ściana (płyta), wieża (2–3 piętra coraz
-węższe), schodki (2–3 stopnie). Materiał "block" (sim/assets/textures/blueprint_block.png) to jasny
+węższe), schodki (2–3 stopnie). Materiał "block" (sim/assets/textures/block_side.png na bokach z niebieskimi
+prostokątami, block_top.png na górze i spodzie) to jasny
 panel z siatką; odcień daje geom_rgba. Bloki nie nachodzą na siebie, na start ani na plac celu.
 
 Wysokość: zwykłe bloki zostawiają nad sobą >= TOP_CLEARANCE do górnej granicy planszy (da się przelecieć
@@ -16,7 +17,9 @@ ominąć. Nie ma bloków „prawie do przelecenia” (szczyt między granicą �
 Pochylenie: ~TILT_P zwykłych bloków stoi pod kątem TILT_GROUND_ANGLE do podłoża (reszta pionowo). Obracamy
 całe ciało (body_quat), więc obwiednia z kompilacji (w układzie ciała) dalej obejmuje części.
 Podstawa zawsze jest w ziemi: blok jest obniżony tak, że najwyżej uniesiony róg podstawy leży >= SINK pod
-gruntem — pochylony blok wygląda, jakby wyrastał z ziemi pod kątem, nigdy nie wisi w powietrzu.
+gruntem — pochylony blok wygląda, jakby wyrastał z ziemi pod kątem, nigdy nie wisi w powietrzu. Pochyla się
+w stronę wąskiego boku, a co najmniej MIN_ABOVE jego objętości (próbki 4x4x4 na część, względem prawdziwego
+terenu pod każdą próbką) jest nad gruntem — żaden blok nie znika pod ziemią.
 Wszystkie części kolidują z dronem.
 """
 
@@ -41,6 +44,8 @@ TILT_GROUND_ANGLE = (30.0, 80.0)  # stopnie między osią bloku a podłożem (90
 ENVELOPE_RADIUS = 4.6     # m, obwiednia największego bloku w jego układzie (zasięg w poziomie od środka)
 ENVELOPE_HEIGHT = 14.0    # m, obwiednia największego bloku w jego układzie (od podstawy)
 SINK = 0.3                # m, podstawa wchodzi tyle w ziemię (na zboczu i przy pochyleniu nie wisi)
+MIN_ABOVE = 0.5           # co najmniej taki udział objętości bloku musi być nad gruntem
+ABOVE_MARGIN = 0.05       # zapas na zgrubne próbkowanie (4x4x4) — sprawdzamy MIN_ABOVE + ABOVE_MARGIN
 TINY = 1e-3               # m, rozmiar nieużytej części (schowana pod ziemią)
 
 # Odcienie (mnożą jasną teksturę): biel makiety, błękit, stal, akcent bursztynowy (rzadko).
@@ -78,7 +83,21 @@ def add_pool(spec):
         body = spec.worldbody.add_body(name=f"block{i}", pos=[0, 0, HIDDEN_Z])
         for k in range(PARTS):
             body.add_geom(name=f"block{i}_part{k}", type=mujoco.mjtGeom.mjGEOM_BOX, material="block",
-                          size=[r, r, half_h], pos=[0, 0, half_h - SINK])
+                          size=[r, r, half_h], pos=[0, 0, half_h - SINK],
+                          rgba=[1, 1, 1, 0])  # niewidoczny, dopóki place() go nie postawi
+
+
+def hide(model, body):
+    """Chowa blok (id ciała): pod ziemię, maleńki i przezroczysty — nic nie prześwituje pod mapą.
+
+    Samo przeniesienie na HIDDEN_Z zostawiało pełny rozmiar (do ~13 m, a nieużyte z kompilacji to obwiednia
+    4.6 x 14 m), więc pod środkiem mapy był widoczny blok.
+    """
+    name = model.body(body).name
+    model.body_pos[body] = (0, 0, HIDDEN_Z)
+    model.body_quat[body] = (1, 0, 0, 0)
+    for k in range(PARTS):
+        _set_geom(model, model.geom(f"{name}_part{k}").id, (0, 0, 0), (TINY, TINY, TINY), (1, 1, 1, 0))
 
 
 def has_pool(model):
@@ -148,15 +167,34 @@ def corners(parts):
     return np.vstack(all_c), np.vstack(base_c)
 
 
-def _rotation(yaw, tilt):
-    """Pochylenie o tilt wokół osi y bloku, potem obrót o yaw wokół pionu. Zwraca (quat, macierz 3x3)."""
-    q_tilt = np.array([np.cos(tilt / 2), 0, np.sin(tilt / 2), 0])
+_GRID = (np.arange(4) + 0.5) / 4 * 2 - 1  # 4 próbki na oś, środki komórek w [-1, 1]
+_CELLS = np.array([[a, b, c] for a in _GRID for b in _GRID for c in _GRID])
+
+
+def volume_samples(parts):
+    """Punkty wewnątrz części (N, 3) w układzie bloku i ich wagi objętości (N,) — do udziału nad ziemią."""
+    points, weights = [], []
+    for p, size in parts:
+        points.append(np.asarray(p, float) + _CELLS * size)
+        weights.append(np.full(len(_CELLS), 8 * np.prod(size) / len(_CELLS)))
+    return np.vstack(points), np.concatenate(weights)
+
+
+def _rotation(yaw, tilt, axis="y"):
+    """Pochylenie o tilt wokół osi bloku (x albo y), potem obrót o yaw wokół pionu. Zwraca (quat, macierz 3x3)."""
+    s = np.sin(tilt / 2)
+    q_tilt = np.array([np.cos(tilt / 2), s, 0, 0]) if axis == "x" else np.array([np.cos(tilt / 2), 0, s, 0])
     q_yaw = np.array([np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)])
     q = np.zeros(4)
     mujoco.mju_mulQuat(q, q_yaw, q_tilt)
     mat = np.zeros(9)
     mujoco.mju_quat2Mat(mat, q)
     return q, mat.reshape(3, 3)
+
+
+def _above_fraction(z, ground_z, weights):
+    """Udział objętości (wag próbek) nad gruntem."""
+    return float(weights[np.asarray(z) > ground_z].sum() / weights.sum())
 
 
 def _set_geom(model, gid, pos, size, rgba):
@@ -180,7 +218,7 @@ def place(model, rng, ground, half_size, start, target, ceiling):
         body = model.body(f"block{i}").id
         geoms = [model.geom(f"block{i}_part{k}").id for k in range(PARTS)]
         if len(placed) >= wanted:
-            model.body_pos[body] = (0, 0, HIDDEN_Z)
+            hide(model, body)
             continue
         kind = KINDS[rng.choice(len(KINDS), p=weights / weights.sum())]
         tall = kind.name in ("filar", "ściana", "wieża") and rng.random() < TALL_P
@@ -189,12 +227,25 @@ def place(model, rng, ground, half_size, start, target, ceiling):
         assert np.max(np.hypot(body_corners[:, 0], body_corners[:, 1])) <= ENVELOPE_RADIUS + 1e-9
         assert body_corners[:, 2].max() + SINK <= ENVELOPE_HEIGHT - SINK, "blok większy niż obwiednia"
 
+        samples, sample_w = volume_samples(parts)
+        # Pochylenie w stronę wąskiego boku (obrót wokół dłuższej osi podstawy): obniżenie zależy wtedy od
+        # grubości, nie szerokości — ściana opiera się bokiem, zamiast zakopywać się na całą szerokość.
+        axis = "x" if np.ptp(base_corners[:, 0]) >= np.ptp(base_corners[:, 1]) else "y"
+        yaw = rng.uniform(0, 2 * np.pi)
         tilt = 0.0
         if not tall and rng.random() < TILT_P:
-            tilt = np.deg2rad(90 - rng.uniform(*TILT_GROUND_ANGLE))
-        quat, rot = _rotation(rng.uniform(0, 2 * np.pi), tilt)
+            for _ in range(5):  # na płaskim gruncie musi zostać nad ziemią wyraźnie więcej niż MIN_ABOVE
+                tilt = np.deg2rad(90 - rng.uniform(*TILT_GROUND_ANGLE))
+                _, rot = _rotation(yaw, tilt, axis)
+                lift = (base_corners @ rot.T)[:, 2].max() + SINK
+                if _above_fraction((samples @ rot.T)[:, 2] - lift, 0.0, sample_w) >= MIN_ABOVE + 0.1:
+                    break
+            else:
+                tilt = 0.0
+        quat, rot = _rotation(yaw, tilt, axis)
         world = body_corners @ rot.T
         base_world = base_corners @ rot.T
+        samples_world = samples @ rot.T
         reach = float(np.max(np.hypot(world[:, 0], world[:, 1])))
         # Ciało stawiamy na z = grunt - SINK - (najwyżej uniesiony róg podstawy względem dołu podstawy):
         # wtedy cała podstawa jest >= SINK pod gruntem.
@@ -216,9 +267,12 @@ def place(model, rng, ground, half_size, start, target, ceiling):
                 continue
             if not tall and top > ceiling - TOP_CLEARANCE:  # zwykły: da się przelecieć górą
                 continue
+            terrain = ground(x + samples_world[:, 0], y + samples_world[:, 1])
+            if _above_fraction(base - lift + samples_world[:, 2], terrain, sample_w) < MIN_ABOVE + ABOVE_MARGIN:
+                continue  # np. przy pagórku: blok zakopany w ponad połowie
             break
         else:  # brak miejsca — chowamy ten blok
-            model.body_pos[body] = (0, 0, HIDDEN_Z)
+            hide(model, body)
             continue
         placed.append((x, y, reach))
         model.body_pos[body] = (x, y, base - lift)
