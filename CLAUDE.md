@@ -174,7 +174,7 @@ Dane: `npm run dev` / `build` uruchamia `scripts/sync-data.mjs`, który kopiuje 
 
 - `docs/prezentacja/` (NeuroFly.pptx + build.js) powstało w innej sesji; nie było weryfikowane względem wyników z v888.
 
-- `neurofly/` w katalogu głównym to pusty, zagnieżdżony klon tego samego remote — nie commitować, do usunięcia przez właściciela.
+- CI: `.github/workflows/tests.yml` — pytest (bez GPU/FlyVis/danych BANC, te testy się pomijają) i typy eksploratora.
 - Uruchamianie: torch z CUDA, potem `pip install -e .[all]` (extras: `vision`, `sim`, `dev`), `python scripts/download_banc.py`, `flyvis download-pretrained`, `pytest`.
 - `python scripts/doctor.py [--master IP]` sprawdza instalację (Python 3.12, pakiety, torch z CUDA, wagi FlyVis,
   dane BANC, dekodery, łącze z masterem) i podaje polecenia naprawy. Master odpowiada na `probe` bez liczenia workera.

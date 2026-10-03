@@ -1,0 +1,42 @@
+# Testy przy każdym pushu i PR. Bez GPU, FlyVis i danych BANC (~360 MB) — testy, które ich wymagają,
+# same się pomijają (pytest.importorskip / skipif). MuJoCo renderuje offscreen przez OSMesa.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    env:
+      MUJOCO_GL: osmesa
+      PYOPENGL_PLATFORM: osmesa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: OSMesa (render MuJoCo bez ekranu)
+        run: sudo apt-get update && sudo apt-get install -y libosmesa6-dev
+      - name: Instalacja (bez vision: torch/FlyVis)
+        run: pip install -e ".[sim,dev]"
+      - name: pytest
+        run: pytest -q -rs
+
+  explorer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: explorer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: explorer/package-lock.json
+      - run: npm ci
+      - name: TypeScript (build wymaga data/viz z BANC, więc tylko typy)
+        run: npm run typecheck
