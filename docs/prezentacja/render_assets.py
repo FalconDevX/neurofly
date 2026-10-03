@@ -117,12 +117,23 @@ def splat(img, u, v, color, alpha, r=1):
             np.add.at(img, (vv[ok], uu[ok]), color[ok] * alpha[ok, None])
 
 
-FONT_B = r"C:\Windows\Fonts\seguisb.ttf"  # Segoe UI Semibold
-FONT_R = r"C:\Windows\Fonts\segoeui.ttf"
+def _font(name, fallback):
+    """Roboto (ten sam font co w prezentacji) z czcionek użytkownika albo systemu; gdy go nie ma — Segoe UI."""
+    import os
+
+    for d in (os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Windows\Fonts"), r"C:\Windows\Fonts"):
+        f = os.path.join(d, name)
+        if os.path.exists(f):
+            return f
+    return fallback
+
+
+FONT_B = _font("Roboto-Medium.ttf", r"C:\Windows\Fonts\seguisb.ttf")
+FONT_R = _font("Roboto-Regular.ttf", r"C:\Windows\Fonts\segoeui.ttf")
 
 
 def draw_labels(out, labels, tf, yaw, pitch, size=44):
-    """Etykiety jak w eksploratorze: kropka na kotwicy, linia do boku, nazwa + krótki opis (Segoe UI).
+    """Etykiety jak w eksploratorze: kropka na kotwicy, linia do boku, nazwa + krótki opis (Roboto).
     labels: (nazwa, opis, punkt BANC, kolor, strona "L"/"R"); etykiety po jednej stronie nie nachodzą na siebie."""
     from PIL import Image, ImageDraw, ImageFont
 
@@ -256,7 +267,7 @@ def retina():
         cv2.imwrite(str(OUT / f"retina_{eye}.png"), cv2.cvtColor(out.astype(np.uint8), cv2.COLOR_RGB2BGR))
 
 
-def fly_xray(W=2600, H=1500, yaw=0.38, pitch=0.30, name="fly_xray.png"):
+def fly_xray(W=2600, H=1500, yaw=0.15, pitch=0.22, name="fly_xray.png"):
     """Półprzezroczyste ciało muszki (NeuroMechFly, scripts/export_fly_body.py) z connectomem BANC w środku:
     ciało jak szkło (jaśniejsze krawędzie — Fresnel), somy w kolorach klas, obwód lotu z poświatą.
     Dopasowanie ciała do BANC jest ilustracyjne (głowa → mózg, tułów → VNC)."""

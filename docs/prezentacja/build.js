@@ -11,8 +11,8 @@ const DATA = JSON.parse(fs.readFileSync(A("data.json"), "utf8"));
 
 const THEME = {
   name: "NeuroFly",
-  headFontFace: "Segoe UI",
-  bodyFontFace: "Segoe UI",
+  headFontFace: "Roboto", // osadzony w .pptx (embed_fonts.ps1), licencja Apache 2.0
+  bodyFontFace: "Roboto",
   colors: {
     dk1: "09090B", // tło (zinc-950)
     lt1: "FAFAFA", // tekst
