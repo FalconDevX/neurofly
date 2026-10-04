@@ -8,7 +8,7 @@
   --line: #27272a;      /* zinc-800 */
   --ink: #fafafa;       /* zinc-50 */
   --muted: #a1a1aa;     /* zinc-400 */
-  --accent: #2dd4bf;    /* teal-400: jedyny akcent interfejsu */
+  --accent: #ff2d6f;    /* czerwono-różowy akcent jak w prezentacji (RED w docs/prezentacja/build.js) */
   --accent-2: #fafafa;  /* przycisk główny jak w shadcn: jasny na ciemnym */
   --pink: #fb7185;      /* rose-400 */
   --ok: #4ade80;

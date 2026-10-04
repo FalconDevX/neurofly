@@ -27,15 +27,20 @@ from sim.env import SCENARIOS, DroneEnv, summarize  # noqa: E402
 from visual_pipeline.zmq_protocol import DEFAULT_ADDRESS, VisionClient  # noqa: E402
 
 
-def local_client(decoder: Path | None = None):
+def local_client(decoder: Path | None = None, lesion: list[str] | None = None):
     """Serwer wzroku + BancController w tym procesie (wymaga torch/FlyVis i danych BANC).
-    Odczyt (6 MN / + pojedyncze DN) wynika z rozmiaru wag ``decoder`` (``train_decoder.py --readout``)."""
+    Odczyt (6 MN / + pojedyncze DN) wynika z rozmiaru wag ``decoder`` (``train_decoder.py --readout``).
+    ``lesion``: prefiksy grup do wycięcia (``Connectome.lesioned``)."""
     from banc_control import BancController, Connectome
     from visual_pipeline import VisionBridge
     from visual_pipeline.server import ControlServer, LocalClient
 
     readout = "dn" if decoder and np.load(decoder)["M"].shape[1] > 6 else "mn"
-    ctrl = BancController(Connectome.from_banc(), readout=readout)
+    c, cut = Connectome.from_banc(), None
+    if lesion:
+        c, cut = c.lesioned(lesion)
+        print(f"lezja {lesion}: {len(cut)} neuronów wyciętych", flush=True)
+    ctrl = BancController(c, readout=readout, lesion=cut)
     return LocalClient(ControlServer(VisionBridge(fps=30, fisheye=True), ctrl)), ctrl
 
 
@@ -110,13 +115,17 @@ def main() -> None:
     ap.add_argument("--video", type=Path, help="zapisz MP4 (widok zza drona + oczy)")
     ap.add_argument("--brain", action="store_true", help="w wideo panel z aktywnością BANC (tylko z --local)")
     ap.add_argument("--no-calib", action="store_true", help="zostaw kalibrację, którą ma serwer")
+    ap.add_argument("--lesion", nargs="+", metavar="GRUPA",
+                    help="wytnij grupy (prefiks nazwy: dn_flight, haltere_aff, visual, wing_steering…; tylko --local)")
     args = ap.parse_args()
 
     env = DroneEnv(mode=args.mode, use_roll=args.use_roll, max_yaw_rate=args.max_yaw_rate,
                    thrust_mode=args.thrust)
     if args.local:
-        client, ctrl = local_client(args.decoder)
+        client, ctrl = local_client(args.decoder, args.lesion)
     else:
+        if args.lesion:
+            ap.error("--lesion działa z --local")
         if args.decoder:
             ap.error("--decoder działa z --local; serwer ZMQ: scripts/vision_server.py --decoder")
         client, ctrl = VisionClient(args.address, timeout_ms=60_000), None

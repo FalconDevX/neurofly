@@ -71,6 +71,9 @@ def main():
     parser.add_argument("--beacon-scale", type=float, default=1.0, help="z --banc: szerszy cel (prostopadłościan, w pamięci)")
     parser.add_argument("--beacon-alpha", type=float, default=None, help="z --banc: przezroczystość znacznika (1 = pełny)")
     parser.add_argument("--vision-range", type=float, default=float("inf"), help="z --banc: bliżej celu yaw z BANC, dalej z GPS [m]")
+    parser.add_argument("--obstacles", choices=("clear", "path", "keep"), default="clear",
+                        help="z --banc: czysty korytarz / bloki na trasie / wszystkie bloki")
+    parser.add_argument("--path-blocks", type=int, default=2, help="z --banc --obstacles path: ile bloków na trasie")
     parser.add_argument("--beacon-color", choices=("scene", "dark-red"), default="dark-red",
                     help="kolor celu: ciemnoczerwony (kontrast jasności dla FlyVis) albo ze sceny (pomarańczowy)")
     parser.add_argument("--wind-speed", type=float, default=8.0, help="średnia prędkość wiatru [m/s] (CapsLock)")
@@ -125,12 +128,14 @@ def main():
     print(__doc__)
     print(f"sterowanie: {'BANC ' + str(args.banc) if args.banc else 'model ' + args.model if policy else 'klawiatura (bez modelu dron sam nie leci)'}")
     reset_policy = None
-    if banc:  # po każdym resecie: korytarz do celu bez bloków (jak w treningu), stan sieci od nowa
+    if banc:  # po każdym resecie: korytarz do celu według --obstacles (jak w treningu), stan sieci od nowa
         from sim.banc_pilot import clear_corridor
 
         def banc_reset(o):
-            if clear_corridor(env):
-                o["eyes"] = np.stack(env.eyes.render(env.data))
+            if args.obstacles != "keep":
+                keep = args.path_blocks if args.obstacles == "path" else 0
+                if clear_corridor(env, keep=keep, rng=np.random.default_rng(int(env.world_seed) + 7)):
+                    o["eyes"] = np.stack(env.eyes.render(env.data))
             banc.reset(o)
 
         reset_policy = banc_reset

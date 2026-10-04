@@ -126,3 +126,19 @@ def test_yaw_weight_zero_keeps_yaw_row_out_of_far_samples():
     for i, (x, s, t) in enumerate(_data(8, n=100)):
         dec.add(x, s, t, yaw_weight=0.0)
     assert dec.A_yaw.sum() == 0 and dec.A_ctl.sum() != 0  # daleko: uczymy thrust/roll/pitch, yaw nie
+
+
+def test_banc_only_thrust_has_zero_sensor_weights_and_survives_save(tmp_path):
+    dec = WorldDecoder(12, lam=1e-4, banc_only=("thrust",))
+    for x, s, t in _data(12):
+        dec.add(x, s, t)
+    dec.fit()
+    assert np.all(dec.W_ctl[0, 12:] == 0)  # thrust: czujniki = 0 z konstrukcji
+    assert np.abs(dec.W_ctl[1, 12:]).sum() > 0.1  # roll dalej z czujników
+    dec.save(tmp_path / "w.npz")
+    back = WorldDecoder.load(tmp_path / "w.npz")
+    assert back.banc_only == ("thrust",)
+    M = dec.to_matrix()
+    M[0, -1] = 1.0  # np. wagi od mastera z czujnikiem w thrust → maska je zeruje
+    back.from_matrix(M)
+    assert back.W_ctl[0, -1] == 0

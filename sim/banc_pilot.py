@@ -22,6 +22,13 @@ poniżej rozdzielczości oka muszki (~5°) — stąd pomiar widoczności (script
 
 Nauczyciel (``teacher``, tylko do treningu): z prawdziwego stanu — yaw ∝ kąt do celu, pitch do prędkości
 ``speed``·max(cos kąta, 0) (najpierw obrót, potem lot), thrust do wysokości ``height`` nad terenem.
+Z ``avoid=True`` omija bloki: promienie MuJoCo w wachlarzu ±90° na wysokości drona (zasięg ``AVOID_RANGE``),
+kierunek = najbliższa celowi wolna luka (poszerzona o margines na rozmiar drona), przed blokiem zwalnia.
+Nauczyciel zna geometrię świata — BANC jej nie dostaje, ma się tego nauczyć z oczu (NASZE ZAŁOŻENIE: uczenie
+z nauczycielem, nie wrodzony odruch).
+
+Przeszkody (``WorldRunner(obstacles=…)``): ``clear`` — czysty korytarz (jak dotąd), ``path`` — korytarz,
+ale ``path_blocks`` bloków w połowie trasy zostaje (losowane z ziarna świata), ``keep`` — wszystkie bloki.
 """
 
 from __future__ import annotations
@@ -65,12 +72,14 @@ def set_beacon(model, scale: float = 1.0, alpha: float | None = None, color=None
         model.geom_rgba[gid, 3] = alpha  # target_box ma kolor w rgba (bez materiału)
 
 
-def clear_corridor(env, width: float = 3.0) -> int:
+def clear_corridor(env, width: float = 3.0, keep: int = 0, rng: np.random.Generator | None = None) -> int:
     """Chowa pod teren bloki w pasie ±``width`` m (+ zasięg bloku) wokół odcinka start–cel.
 
-    Na planszy stoi 40–60 bloków, na 1 m wysokości prosta droga do celu zwykle jest zablokowana,
-    a omijania przeszkód nie uczymy (NASZE ZAŁOŻENIE: czysty korytarz). Zmiana tylko w pamięci modelu;
-    reszta bloków zostaje i jest widoczna dla oczu. Wywoływać po ``env.reset``. Zwraca liczbę schowanych.
+    Na planszy stoi 60–85 bloków, na 1 m wysokości prosta droga do celu zwykle jest zablokowana.
+    ``keep`` = 0: czysty korytarz (NASZE ZAŁOŻENIE w treningu bez omijania). ``keep`` > 0: tyle bloków
+    stojących blisko linii (≤ 2.5 m od środka) w połowie trasy (20–80 %) zostaje — przeszkody do ominięcia,
+    wybór z ``rng``. Zmiana tylko w pamięci modelu; reszta bloków zostaje i jest widoczna dla oczu.
+    Wywoływać po ``env.reset``. Zwraca liczbę schowanych.
     """
     from sim import blocks
 
@@ -78,18 +87,87 @@ def clear_corridor(env, width: float = 3.0) -> int:
         return 0
     start = env.data.xpos[env.drone_id][:2].copy()
     seg = env.target.position(env.data)[:2] - start
-    hidden = 0
+    inside, on_path = [], []
     for i in range(blocks.POOL_SIZE):
         body = env.model.body(f"block{i}").id
         pos = env.model.body_pos[body]
         if pos[2] <= blocks.HIDDEN_Z + 1:
             continue
         t = np.clip(np.dot(pos[:2] - start, seg) / max(np.dot(seg, seg), 1e-9), 0.0, 1.0)
-        if np.linalg.norm(pos[:2] - start - t * seg) < width + blocks.ENVELOPE_RADIUS:
+        off = np.linalg.norm(pos[:2] - start - t * seg)
+        if off < width + blocks.ENVELOPE_RADIUS:
+            inside.append(body)
+            if off < 2.5 and 0.2 <= t <= 0.8:
+                on_path.append(body)
+    kept = set()
+    if keep and on_path:
+        rng = rng or np.random.default_rng()
+        kept = set(rng.choice(on_path, size=min(keep, len(on_path)), replace=False).tolist())
+    hidden = 0
+    for body in inside:
+        if body not in kept:
             blocks.hide(env.model, body)  # pod ziemię, maleńki i niewidoczny
             hidden += 1
     mujoco.mj_forward(env.model, env.data)
     return hidden
+
+
+AVOID_RANGE = 4.0                                 # m, zasięg promieni nauczyciela
+AVOID_FAN = np.deg2rad(np.arange(-90, 91, 10))    # kąty promieni względem nosa, + = w prawo
+AVOID_MARGIN = 2                                  # sąsiednie promienie (po 10°) też muszą być wolne
+
+
+def block_geoms(model) -> set:
+    """Geomy bloków (sim/blocks.py); pusty zbiór, gdy scena nie ma bloków."""
+    from sim import blocks
+
+    if not blocks.has_pool(model):
+        return set()
+    bodies = {model.body(f"block{i}").id for i in range(blocks.POOL_SIZE)}
+    return {g for g in range(model.ngeom) if model.geom_bodyid[g] in bodies}
+
+
+def scan_blocks(env, angles=AVOID_FAN, reach: float = AVOID_RANGE) -> np.ndarray:
+    """Odległość do bloku wzdłuż poziomych promieni z drona (kąty jak ``bearing``: + = w prawo); inf = wolne."""
+    if not hasattr(env, "_block_geoms"):
+        env._block_geoms = block_geoms(env.model)
+    pos = env.data.xpos[env.drone_id].copy()
+    _, _, yaw = euler_zyx(env.data)
+    gid = np.zeros(1, np.int32)
+    out = np.full(len(angles), np.inf)
+    for i, a in enumerate(angles):
+        h = yaw - a  # MuJoCo: yaw + = w lewo
+        d = mujoco.mj_ray(env.model, env.data, pos, np.array([np.cos(h), np.sin(h), 0.0]), None, 1, env.drone_id, gid)
+        if 0 <= d < reach and int(gid[0]) in env._block_geoms:
+            out[i] = d
+    return out
+
+
+def avoid_heading(env, b: float) -> tuple[float, float]:
+    """Kierunek omijania [rad, + = w prawo] i prześwit na wprost [m] (inf = wolne). ``env._avoid_side``:
+    strona ostatniego objazdu (histereza, żeby nie przeskakiwać między lukami po obu stronach bloku)."""
+    d = scan_blocks(env)
+    blocked = np.isfinite(d)
+    front = float(d[np.abs(AVOID_FAN) <= np.deg2rad(20)].min())
+    if not blocked.any() or abs(b) > AVOID_FAN[-1]:
+        env._avoid_side = 0
+        return b, front
+    wide = blocked.copy()
+    for k in range(1, AVOID_MARGIN + 1):
+        wide[k:] |= blocked[:-k]
+        wide[:-k] |= blocked[k:]
+    i_b = int(np.argmin(np.abs(AVOID_FAN - b)))
+    if not wide[i_b]:
+        env._avoid_side = 0
+        return b, front
+    free = np.flatnonzero(~wide)
+    if len(free) == 0:  # wszędzie blisko: w stronę największego prześwitu
+        return float(AVOID_FAN[int(np.argmax(np.where(blocked, d, AVOID_RANGE)))]), front
+    side = getattr(env, "_avoid_side", 0)
+    cost = np.abs(AVOID_FAN[free] - b) + 0.5 * (side != 0) * (np.sign(AVOID_FAN[free] - b) != side)
+    theta = float(AVOID_FAN[free[int(np.argmin(cost))]])
+    env._avoid_side = int(np.sign(theta - b))
+    return theta, front
 
 
 def bearing(env) -> float:
@@ -99,8 +177,9 @@ def bearing(env) -> float:
     return float((yaw - np.arctan2(d[1], d[0]) + np.pi) % (2 * np.pi) - np.pi)
 
 
-def teacher(env, height: float = 1.0, speed: float = 1.0):
-    """Komenda wzorcowa (FlightCommand, konwencja BANC: yaw + = w prawo, pitch + = do przodu)."""
+def teacher(env, height: float = 1.0, speed: float = 1.0, avoid: bool = False):
+    """Komenda wzorcowa (FlightCommand, konwencja BANC: yaw + = w prawo, pitch + = do przodu).
+    ``avoid``: kurs na wolną lukę zamiast prosto na cel, wolniej przed blokiem."""
     from banc_control import FlightCommand
 
     roll, pitch, yaw = euler_zyx(env.data)
@@ -108,7 +187,12 @@ def teacher(env, height: float = 1.0, speed: float = 1.0):
     v = env.data.qvel[0:3]
     v_fwd = np.cos(yaw) * v[0] + np.sin(yaw) * v[1]
     v_left = -np.sin(yaw) * v[0] + np.cos(yaw) * v[1]
-    v_des = speed * max(np.cos(b), 0.0)
+    v_des = speed
+    if avoid:
+        b, front = avoid_heading(env, b)
+        if np.isfinite(front):
+            v_des *= float(np.clip((front - 1.0) / (AVOID_RANGE - 1.0), 0.2, 1.0))
+    v_des *= max(np.cos(b), 0.0)
     tilt = np.clip(2.0 * (v_des - v_fwd) / GRAVITY, -MAX_TILT, MAX_TILT)
     # roll kasuje dryf w bok: bez tego po skręcie dron krążył wokół celu w odległości ~5 m
     side = np.clip(2.0 * v_left / GRAVITY, -MAX_TILT, MAX_TILT)  # jak VelocityController: roll_des = -a_left/g
@@ -124,10 +208,11 @@ class BancPilot:
                  calib: str = "drone", beacon_scale: float = 1.0, brain: bool = True,
                  cruise_height: float = 1.0, assist: bool | None = None, lr: float = 0.5,
                  readout: str | None = None, yaw_init: Path | None = None, beacon_alpha: float | None = None,
-                 vision_range: float = float("inf"), beacon_color: str = "scene") -> None:
+                 vision_range: float = float("inf"), beacon_color: str = "scene", banc_axes=()) -> None:
         """``decoder_path``: wagi ``WorldDecoder`` (``train_world.py``, plik z ``w_yaw``) albo dekoder z
         ``train_decoder.py`` (tryb ze wspomaganiem). ``decoder_path=None`` + ``assist=False``: nowy
-        ``WorldDecoder`` do treningu, wiersz yaw z ``yaw_init`` (dekoder zawisu, np. planB_distributed.npz)."""
+        ``WorldDecoder`` do treningu, wiersz yaw z ``yaw_init`` (dekoder zawisu, np. planB_distributed.npz);
+        ``banc_axes``: osie thrust/roll/pitch tylko z BANC (bez czujników drona)."""
         from banc_control import BancController, Connectome
         from banc_control.readout import LinearDecoder
         from visual_pipeline import VisionBridge
@@ -150,7 +235,7 @@ class BancPilot:
         self.ctrl = BancController(Connectome.from_banc(), decoder=LinearDecoder(lr=lr, bias=not assist),
                                    readout=readout)
         if not assist and self.world is None:
-            self.world = WorldDecoder(self.ctrl.decoder.M.shape[1])
+            self.world = WorldDecoder(self.ctrl.decoder.M.shape[1], banc_only=banc_axes)
             if yaw_init:  # yaw z dekodera zawisu (te same cechy; bez wyrazu wolnego → 0)
                 w = np.load(yaw_init)["M"][3]
                 self.world.w_yaw[:len(w)] = w
@@ -236,8 +321,10 @@ class BancPilot:
             beacon = obs.get("beacon", np.zeros(2))
             w_vis = vision_weight(float(beacon[1]), self.vision_range)
             yaw_gps = gps_yaw(beacon)
-            cmd.yaw = float(np.clip(w_vis * yaw_banc + (1 - w_vis) * yaw_gps, -1, 1))
-            cmd.debug = {"x": x, "sensors": sens, "yaw_banc": yaw_banc, "w_vis": w_vis}
+            yaw_avoid = float(self.world.w_avoid @ np.nan_to_num(x))  # BANC: skręt omijania dokładany do GPS
+            cmd.yaw = float(np.clip(w_vis * yaw_banc + (1 - w_vis) * (yaw_gps + yaw_avoid), -1, 1))
+            cmd.debug = {"x": x, "sensors": sens, "yaw_banc": yaw_banc, "w_vis": w_vis, "yaw_gps": yaw_gps,
+                         "yaw_avoid": yaw_avoid}
             if self.view is not None:
                 from sim.brain_panel import steer_from_decoder
 
@@ -274,18 +361,38 @@ class BancPilot:
 class WorldRunner:
     """Epizody lotu do celu w ``WorldEnv``: ewaluacja i trening Planu B (DAgger z ``teacher``)."""
 
-    def __init__(self, env, pilot: BancPilot, height: float = 1.0, speed: float = 1.0, clear_path: bool = True) -> None:
-        self.env, self.pilot, self.height, self.speed, self.clear_path = env, pilot, height, speed, clear_path
+    def __init__(self, env, pilot: BancPilot, height: float = 1.0, speed: float = 1.0, obstacles: str = "clear",
+                 path_blocks: int = 2) -> None:
+        assert obstacles in ("clear", "path", "keep")
+        self.env, self.pilot, self.height, self.speed = env, pilot, height, speed
+        self.obstacles, self.path_blocks = obstacles, path_blocks
+        self.avoid = obstacles != "clear"  # nauczyciel omija bloki
 
     def reset(self, world_seed: int, start_noise: bool = False):
-        """Nowy epizod w świecie ``world_seed`` (z czystym korytarzem do celu) → (obs, info)."""
+        """Nowy epizod w świecie ``world_seed`` (korytarz do celu według ``obstacles``) → (obs, info)."""
         env = self.env
         env.start_noise = start_noise
         obs, info = env.reset(options={"world_seed": int(world_seed)})
-        if self.clear_path and clear_corridor(env):
-            obs["eyes"] = np.stack(env.eyes.render(env.data))  # oczy już bez schowanych bloków
-        self.pilot.reset(obs)
+        env._avoid_side = 0
+        if self.obstacles != "keep":
+            keep = self.path_blocks if self.obstacles == "path" else 0
+            if clear_corridor(env, keep=keep, rng=np.random.default_rng(int(world_seed) + 7)) and env.eyes:
+                obs["eyes"] = np.stack(env.eyes.render(env.data))  # oczy już bez schowanych bloków
+        if self.pilot is not None:
+            self.pilot.reset(obs)
         return obs, info
+
+    def touching_block(self) -> bool:
+        """Czy dron dotyka któregoś bloku."""
+        env = self.env
+        if not hasattr(env, "_block_geoms"):
+            env._block_geoms = block_geoms(env.model)
+        if not env._block_geoms or env.data.ncon == 0:
+            return False
+        c = env.data.contact[:env.data.ncon]
+        drone, blk = env.crash.drone_geoms, np.fromiter(env._block_geoms, int)
+        g1, g2 = c.geom1, c.geom2
+        return bool(np.any((np.isin(g1, drone) & np.isin(g2, blk)) | (np.isin(g2, drone) & np.isin(g1, blk))))
 
     def episode(self, world_seed: int, learn: bool = False, beta: float = 0.0,
                 rng: np.random.Generator | None = None, start_noise: bool = False) -> dict:
@@ -293,20 +400,27 @@ class WorldRunner:
         obs, info = self.reset(world_seed, start_noise)
         b0, d0 = np.rad2deg(bearing(env)), info["distance"]
         dmin, losses, heights, done = d0, [], [], False
+        hits, touching = 0, False  # zderzenia z blokami (początki kontaktu)
+        sq_avoid = []  # błąd poprawki omijania w klatkach z blokiem w zasięgu (daleko od celu)
         sq = []  # kwadraty błędów [thrust, roll, pitch, yaw] względem nauczyciela (WorldDecoder)
         while not done:
             cmd = pilot.decide(obs)
             act = cmd
             if learn:
-                target = teacher(env, self.height, self.speed)
+                target = teacher(env, self.height, self.speed, avoid=self.avoid)
                 if pilot.world is not None:  # DAgger: dane do statystyk, wagi dopasowuje wywołujący (fit)
                     from sim.world_decoder import sample_weight
 
                     sens = cmd.debug["sensors"]
                     # yaw z BANC uczymy tylko tam, gdzie cel jest w zasięgu wzroku (dalej kierunek daje GPS)
                     near = float(env._distance() < pilot.vision_range)
-                    sq.append(pilot.world.add(cmd.debug["x"], sens, target, sample_weight(bearing(env), sens),
-                                              yaw_weight=near))
+                    obstacle = self.avoid and bool(np.isfinite(scan_blocks(env)).any())
+                    avoid_target = target.yaw - cmd.debug["yaw_gps"] if self.avoid else None
+                    sq.append(pilot.world.add(cmd.debug["x"], sens, target,
+                                              sample_weight(bearing(env), sens, obstacle), yaw_weight=near,
+                                              avoid_target=avoid_target, avoid_weight=1.0 - near))
+                    if obstacle and not near:
+                        sq_avoid.append((cmd.debug["yaw_avoid"] - avoid_target) ** 2)
                 else:
                     losses.append(dec.fit_step(cmd.debug["motor_features"], target, apply=False))
                 if rng.random() < beta:
@@ -314,6 +428,9 @@ class WorldRunner:
             obs, _, term, trunc, info = env.step(pilot.action(act))
             dmin = min(dmin, info["distance"])
             heights.append(env.data.xpos[env.drone_id][2] - ground_z(env))
+            now = self.touching_block()
+            hits += now and not touching
+            touching = now
             done = term or trunc
         if learn and pilot.world is None:
             dec.apply_pending()  # wagi stałe w trakcie lotu, krok po epizodzie
@@ -323,11 +440,14 @@ class WorldRunner:
 
             mse = np.mean(sq, axis=0)
             extra = {"loss_axes": dict(zip(AXES, map(float, mse)))}
+            if sq_avoid:
+                extra["loss_axes"]["avoid"] = float(np.mean(sq_avoid))
             losses = [float(mse.mean())]
         return {**extra, "world": int(world_seed), "outcome": info["outcome"], "reached": info["outcome"] == "cel",
                 "time": float(info["time"]), "start_dist": float(d0), "min_dist": float(dmin),
                 "bearing": float(b0), "final_deg": float(abs(np.rad2deg(bearing(env)))),
-                "mean_height": float(np.mean(heights)), "loss": float(np.mean(losses)) if losses else float("nan")}
+                "mean_height": float(np.mean(heights)), "min_height": float(np.min(heights)),
+                "block_hits": int(hits), "loss": float(np.mean(losses)) if losses else float("nan")}
 
     def evaluate(self, seeds, log=None) -> dict:
         """``log``: np. ``print`` — linia po każdym świecie (ewaluacja trwa kilka minut)."""
@@ -340,6 +460,9 @@ class WorldRunner:
                 log(f"  ewaluacja {i + 1}/{len(seeds)}: świat {s} → {e['outcome']}, najbliżej {e['min_dist']:.1f} m "
                     f"({time.perf_counter() - t:.0f} s)")
         return {"episodes": eps, "reached": int(sum(e["reached"] for e in eps)), "n": len(eps),
+                "collided": int(sum(e["block_hits"] > 0 for e in eps)),
+                "mean_height": float(np.mean([e["mean_height"] for e in eps])),
+                "min_height": float(np.min([e["min_height"] for e in eps])),
                 "mean_min_dist": float(np.mean([e["min_dist"] for e in eps])),
                 "mean_final_deg": float(np.mean([e["final_deg"] for e in eps]))}
 
@@ -347,7 +470,10 @@ class WorldRunner:
 def show_world(tag: str, ev: dict) -> None:
     per = "  ".join(f"{e['world']}:{'CEL' if e['reached'] else e['outcome'].split(':')[0]}"
                     f"({e['min_dist']:.0f}m)" for e in ev["episodes"])
-    print(f"{tag}: cel {ev['reached']}/{ev['n']}, średnio najbliżej {ev['mean_min_dist']:.1f} m  ({per})", flush=True)
+    extra = (f", zderzenia z blokami {ev['collided']}/{ev['n']}, wys. średnio {ev['mean_height']:.2f} m "
+             f"(min {ev['min_height']:.2f})") if "collided" in ev else ""
+    print(f"{tag}: cel {ev['reached']}/{ev['n']}, średnio najbliżej {ev['mean_min_dist']:.1f} m{extra}  ({per})",
+          flush=True)
 
 
 def main() -> None:
@@ -359,6 +485,9 @@ def main() -> None:
     ap.add_argument("--beacon-scale", type=float, default=1.0)
     ap.add_argument("--beacon-alpha", type=float, default=None)
     ap.add_argument("--max-time", type=float, default=40.0)
+    ap.add_argument("--obstacles", choices=("clear", "path", "keep"), default="clear",
+                    help="czysty korytarz / bloki na trasie / wszystkie bloki")
+    ap.add_argument("--path-blocks", type=int, default=2)
     args = ap.parse_args()
 
     from sim.world_env import WorldEnv
@@ -367,7 +496,8 @@ def main() -> None:
     env = WorldEnv(control="acro" if pilot.assist else "angle", start_noise=False, max_time=args.max_time)
     env.reset(seed=0)
     pilot.bind(env)
-    show_world("wynik", WorldRunner(env, pilot).evaluate(args.seeds))
+    runner = WorldRunner(env, pilot, obstacles=args.obstacles, path_blocks=args.path_blocks)
+    show_world("wynik", runner.evaluate(args.seeds))
 
 
 if __name__ == "__main__":

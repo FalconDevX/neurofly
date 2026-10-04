@@ -8,11 +8,13 @@ Z BANC: pozycje som i szkielety neuronów lotu (µm). Ilustracyjne: dopasowanie 
 ziarna maku (proceduralne, ~1,1 × 0,85 mm, w tej samej skali µm co somy), kamera i efekt „zapalania”.
 """
 import argparse
+import os
 import subprocess
 import sys
 from multiprocessing import Pool
 from pathlib import Path
 
+os.environ.setdefault("OMP_NUM_THREADS", "1")  # procesy puli liczą równolegle, wątki BLAS tylko by się biły
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -106,9 +108,9 @@ for i, (a, b) in enumerate(_offs):
     s = rs.uniform(0.92, 1.08)
     SEEDS.append(dict(
         c=SEED_C + _r * a * 780 + _u * b * 640 + _cam_end[1][2] * rs.uniform(-250, 250),
-        R=Rz @ Ry @ Rx, rad=np.array([550, 420, 330]) * s, bend=0.28,
+        R=Rz @ Ry @ Rx, rad=np.array([560, 420, 300]) * s, bend=0.3,
         t0=10.0 + 0.2 * i, spin=rs.uniform(-2.5, 2.5, 3),
-        vor=rs.normal(size=(90, 3)), seed=i))
+        vor=rs.normal(size=(420, 3)), seed=i))
 for s in SEEDS:
     s["vor"] /= np.linalg.norm(s["vor"], axis=1, keepdims=True)
 _ext = np.array([to_cam(s["c"], _cam_end)[:2] for s in SEEDS] + [to_cam(HEAD, _cam_end)[:2]])
@@ -198,23 +200,25 @@ def draw_seed(img, s, cam, t):
     v0, v1 = int(max(cv_ - rp, 0)), int(min(cv_ + rp, H - 1))
     if u1 <= u0 or v1 <= v0:
         return
-    uu, vv = np.meshgrid(np.arange(u0, u1 + 1) + 0.5, np.arange(v0, v1 + 1) + 0.5)
+    k = max(1, int(np.ceil(2 * rp / 480)))  # duże ziarno (blisko kamery): liczymy rzadziej i skalujemy w górę
+    uu, vv = np.meshgrid(np.arange(u0, u1 + 1, k) + k / 2, np.arange(v0, v1 + 1, k) + k / 2)
     dcam = np.stack([(uu - W / 2) / F, -(vv - H / 2) / F, np.ones_like(uu)], -1)
     dcam /= np.linalg.norm(dcam, axis=-1, keepdims=True)
     dw = dcam @ Rc
     o = Rs.T @ (pos - center)
     dl = dw @ Rs  # = (Rs.T @ dw.T).T
     tt = np.full(uu.shape, np.linalg.norm(o) - rmax)
+    tmax = np.linalg.norm(o) + rmax
     mind = np.full(uu.shape, 1e9)
-    for _ in range(70):
+    for _ in range(48):
         p = o + dl * tt[..., None]
         sd = seed_sdf(p, s)
         mind = np.minimum(mind, sd)
-        tt += np.clip(sd * 0.6, 0.5, None)
+        tt = np.minimum(tt + np.clip(sd * 0.6, 0.5, None), tmax)
     p = o + dl * tt[..., None]
     sd = seed_sdf(p, s)
-    pixw = tt / F
-    hit = sd < pixw
+    pixw = tt * k / F
+    hit = (sd < pixw) & (tt < tmax)
     cov = np.where(hit, 1.0, np.clip(1 - mind / pixw, 0, 1))
     if not (cov > 0).any():
         return
@@ -227,9 +231,11 @@ def draw_seed(img, s, cam, t):
     # siateczka: odległość do dwóch najbliższych punktów na sferze (lokalnie, więc wzór obraca się z ziarnem)
     sph = p / s["rad"]
     sph /= np.linalg.norm(sph, axis=-1, keepdims=True) + 1e-9
-    dots = np.sort(sph.reshape(-1, 3) @ s["vor"].T, axis=1)
-    edge = (dots[:, -1] - dots[:, -2]).reshape(sph.shape[:2])
-    ridge = np.exp(-(edge / 0.035) ** 2)
+    edge = np.ones(sph.shape[:2])
+    on = cov > 0
+    dots = np.partition(sph[on] @ s["vor"].T, -2, axis=1)
+    edge[on] = dots[:, -1] - dots[:, -2]
+    ridge = np.exp(-(edge / 0.012) ** 2)
     base = lerp(np.array([58, 66, 84], np.float32), np.array([128, 138, 158], np.float32), ridge[..., None] * 0.85)
     vdir = -dcam
     L = np.array([-0.45, 0.65, -0.6])
@@ -237,12 +243,17 @@ def draw_seed(img, s, cam, t):
     lam = np.clip((nc * L).sum(-1), 0, 1)
     hlf = L + vdir
     hlf /= np.linalg.norm(hlf, axis=-1, keepdims=True)
-    spec = np.clip((nc * hlf).sum(-1), 0, 1) ** 28 * (0.35 + 0.5 * ridge)
+    spec = np.clip((nc * hlf).sum(-1), 0, 1) ** 40 * (0.12 + 0.3 * ridge)
     rim = (1 - np.clip((nc * vdir).sum(-1), 0, 1)) ** 3
-    col = base * (0.22 + 0.95 * lam[..., None]) + spec[..., None] * 200 + rim[..., None] * np.array([40, 70, 90])
+    col = base * (0.25 + 0.85 * lam[..., None]) + spec[..., None] * 160 + rim[..., None] * np.array([40, 70, 90])
+    col = np.clip(col, 0, 255).astype(np.float32)
+    if k > 1:
+        size = (u1 - u0 + 1, v1 - v0 + 1)
+        col = cv2.resize(col, size, interpolation=cv2.INTER_LINEAR)
+        cov = cv2.GaussianBlur(cv2.resize(cov.astype(np.float32), size, interpolation=cv2.INTER_LINEAR), (0, 0), k * 0.6)
     a = cov[..., None]
     sub = img[v0:v1 + 1, u0:u1 + 1]
-    img[v0:v1 + 1, u0:u1 + 1] = sub * (1 - a) + np.clip(col, 0, 255) * a
+    img[v0:v1 + 1, u0:u1 + 1] = sub * (1 - a) + col * a
 
 
 def frame(t):
@@ -251,7 +262,7 @@ def frame(t):
     acc = np.zeros((H, W, 3), np.float32)
 
     # ciało
-    gb = ease(t / 1.4)
+    gb = ease(t / 1.4) * (1 - 0.45 * ease((7300 - dist) / 4500))  # przy głowie szkło ciszej, mózg widać lepiej
     if gb > 0:
         glass(acc, to_cam(BODY, cam), 120 * gb)
 
@@ -260,7 +271,7 @@ def frame(t):
     su, sv = to_px(q)
     on = ease((t - SOMA_TON) / 0.5)
     flash = np.exp(-((t - SOMA_TON - 0.15) / 0.22) ** 2)
-    a = (on * 0.75 + flash * 1.4) * 0.11 * (2250 / dist) ** -1.2
+    a = (on * 0.75 + flash * 1.4) * 0.30 * (2250 / dist) ** 1.7
     a *= q[:, 2] > 20
     pts = np.zeros_like(acc)
     ui, vi = su.astype(int), sv.astype(int)
@@ -279,8 +290,8 @@ def frame(t):
         if al <= 0 or qs[s0:s0 + k, 2].min() < 20:
             continue
         c = np.array(col, np.float32) * al
-        cv2.polylines(glow, [P[s0:s0 + k]], False, tuple(float(x) * 0.3 for x in c), 5 * thick, cv2.LINE_AA, shift=4)
-        cv2.polylines(line, [P[s0:s0 + k]], False, tuple(float(x) * 0.7 for x in c), thick, cv2.LINE_AA, shift=4)
+        cv2.polylines(glow, [P[s0:s0 + k]], False, tuple(float(x) * 0.18 for x in c), 5 * thick, cv2.LINE_AA, shift=4)
+        cv2.polylines(line, [P[s0:s0 + k]], False, tuple(float(x) * 0.55 for x in c), thick, cv2.LINE_AA, shift=4)
     acc += cv2.GaussianBlur(glow, (0, 0), 5) + line
 
     img = BG + (255 - BG) * (1 - np.exp(-acc / 210.0))
@@ -312,17 +323,16 @@ def labels(img, cam, t):
     def tag(anchor, dx, dy, title, sub):
         u, v = to_px(to_cam(anchor[None], cam))
         u, v = float(u[0]), float(v[0])
-        x, y = u + dx, v + dy
-        dr.line([(u, v), (x, y + 44)], fill=(250, 250, 250, int(A * 0.6)), width=2)
+        x, y = min(max(u + dx, 40), W - 520), min(max(v + dy, 70), H - 120)  # napis zawsze w kadrze
+        dr.line([(u, v), (x + 20, y + 44)], fill=(250, 250, 250, int(A * 0.6)), width=2)
         dr.ellipse([u - 5, v - 5, u + 5, v + 5], fill=(250, 250, 250, A))
-        dr.text((x, y), title, font=fb, fill=(250, 250, 250, A), anchor="lb" if dx >= 0 else "rb")
-        dr.text((x, y + 8), sub, font=fr, fill=(170, 170, 180, A), anchor="lt" if dx >= 0 else "rt")
+        dr.text((x, y), title, font=fb, fill=(250, 250, 250, A), anchor="lb")
+        dr.text((x, y + 8), sub, font=fr, fill=(170, 170, 180, A), anchor="lt")
 
     pos, R = cam
-    head_px = to_px(to_cam(HEAD[None], cam))
-    tag(HEAD + R[1] * 330, -60, -170, "Fruit fly brain", "BANC v888, 175,401 neurons")
+    tag(HEAD, -200, -300, "Fruit fly brain", "BANC v888, 175,401 neurons")
     top = max(SEEDS, key=lambda s: np.dot(s["c"], R[1]))
-    tag(top["c"] + R[1] * 380, 80, -150, "Poppy seeds", "about 1 mm each")
+    tag(top["c"] + R[1] * 250, 160, -120, "Poppy seeds", "about 1 mm each")
 
     # pasek skali 1 mm na głębokości głowy
     z = to_cam(HEAD[None], cam)[0, 2]
@@ -333,7 +343,6 @@ def labels(img, cam, t):
     for xx in (x0, x1):
         dr.line([(xx, y1 - 9), (xx, y1 + 9)], fill=(250, 250, 250, A), width=3)
     dr.text(((x0 + x1) / 2, y1 - 16), "1 mm", font=fr, fill=(250, 250, 250, A), anchor="mb")
-    del head_px
     im = Image.alpha_composite(im.convert("RGBA"), ov).convert("RGB")
     return np.asarray(im)
 

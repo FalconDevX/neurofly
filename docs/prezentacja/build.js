@@ -180,41 +180,45 @@ pres.addSection({ title: "Idea" });
 }
 
 {
-  const s = content("What makes NeuroFly different", "Idea");
-  const rows = [
-    ["Brain", "artificial network, trained end-to-end", "the real fly wiring diagram, kept frozen"],
-    ["Scale", "a small, hand-picked circuit", "whole brain and nerve cord: 175,401 neurons"],
-    ["Heading", "decided by the trained net or a PID loop", "decided by the fly's own flight neurons"],
-    ["Learned", "everything", "only a simple readout of flight neurons"],
-    ["Eyes", "a standard image network", "a fly-eye model: 721 facets per eye"],
+  const s = content("What NeuroFly does and why", "Idea");
+  text(s, [
+    { text: "A drone sees through two cameras. A fly-eye model passes the image into the ", options: { color: T.lt1 } },
+    { text: "real wiring of a fruit fly's brain", options: { color: RED } },
+    { text: ", and the fly's own flight neurons decide where the drone turns.", options: { color: T.lt1 } },
+  ], { x: 0.62, y: 1.15, w: 8.85, h: 0.75, fontSize: 16, fontFace: "Roboto Light", objectName: "what-it-does" });
+  const cols = [
+    ["our premises", T.accent2, 0.62, 3.6, [
+      "Only the real connectome: no invented neurons or connections",
+      "The brain is never trained; we only learn to read its flight neurons",
+      "The fly brain chooses where to turn; drone sensors only keep it level",
+    ]],
+    ["why", T.accent3, 4.4, 2.6, [
+      "Test if a mapped brain can really drive a body",
+      "See which neurons carry the decision",
+      "A path to small drones guided by vision",
+    ]],
   ];
-  // najpierw definicje (co znaczy connectome i PID), potem porównanie
-  gloss(s, [["Connectome:", "the complete wiring diagram of a nervous system, every neuron and synapse"],
-    ["PID:", "the classic hand-tuned controller used in most drones"]], 0.62, 8.85, 1.08);
-  const x0 = 0.62, cK = 1.05, cA = 2.35, cB = 2.55, y0 = 1.6, rh = 0.5;
-  eyebrow(s, "typical approach", x0 + cK, y0, cA, MUTED, "th-a");
-  eyebrow(s, "NeuroFly", x0 + cK + cA + 0.1, y0, cB, RED, "th-b");
-  rows.forEach(([k, a, b], i) => {
-    const y = y0 + 0.32 + i * rh;
-    s.addShape(pres.shapes.LINE, { x: x0, y: y - 0.04, w: cK + cA + cB + 0.1, h: 0, line: { color: "3F3F46", width: 0.5 }, objectName: `row-${i}-line` });
-    text(s, k, { x: x0, y: y + 0.06, w: cK, h: 0.4, fontSize: 12, bold: true, color: T.lt2, objectName: `row-${i}-k` });
-    text(s, a, { x: x0 + cK, y: y + 0.06, w: cA - 0.15, h: 0.45, fontSize: 11, color: MUTED, objectName: `row-${i}-a` });
-    text(s, b, { x: x0 + cK + cA + 0.1, y: y + 0.06, w: cB, h: 0.45, fontSize: 12, color: T.lt1, objectName: `row-${i}-b` });
+  const y0 = 2.1, h = 2.35;
+  cols.forEach(([k, col, x, w, lines], c) => {
+    card(s, x, y0, w, h, `col-${c}`);
+    eyebrow(s, k, x + 0.22, y0 + 0.18, w - 0.4, col, `col-${c}-k`);
+    lines.forEach((t, i) => {
+      text(s, t, { x: x + 0.22, y: y0 + 0.5 + i * 0.6, w: w - 0.42, h: 0.55, fontSize: 12, color: T.lt1, objectName: `col-${c}-${i}` });
+    });
   });
-  const yEnd = y0 + 0.32 + rows.length * rh - 0.04; // linia zamykająca tabelę, karta kończy się na tej samej wysokości
-  s.addShape(pres.shapes.LINE, { x: x0, y: yEnd, w: cK + cA + cB + 0.1, h: 0, line: { color: "3F3F46", width: 0.5 }, objectName: "row-end-line" });
-  card(s, 6.85, y0, 2.65, yEnd - y0, "rule-card", RED);
-  eyebrow(s, "our rule no. 1", 7.05, y0 + 0.16, 2.3, RED, "rule-k");
-  text(s, "The connectome makes the key decision", { x: 7.05, y: y0 + 0.4, w: 2.3, h: 0.5, fontSize: 13, bold: true, objectName: "rule-h" });
-  stat(s, 7.05, y0 + 0.9, 2.3, "100%", "of the heading near the target comes from BANC neurons", RED, "rule-s", 26);
-  text(s, "We dropped an early synthetic network the moment it stopped looking like BANC.", {
-    x: 7.05, y: y0 + 2.25, w: 2.3, h: 0.5, fontSize: 9, italic: true, color: T.lt2, objectName: "rule-note" });
-  s.addNotes("Hundreds of projects call themselves brain-inspired. Almost all use an artificial network that borrows only " +
-    "the word 'neuron', or a tiny hand-built circuit. We use the real, complete wiring of a fruit fly, we never train it, " +
-    "and we built the system so that the most important decision — where to turn — is made by the fly's own descending " +
-    "neurons. Drone sensors get zero weight on heading by construction. When an early prototype used a made-up network, " +
-    "we threw it away.");
+  card(s, 7.2, y0, 2.3, h, "rule-card", RED);
+  eyebrow(s, "our rule no. 1", 7.4, y0 + 0.18, 2.0, RED, "rule-k");
+  text(s, "The connectome makes the key decision", { x: 7.4, y: y0 + 0.42, w: 1.95, h: 0.5, fontSize: 12, bold: true, objectName: "rule-h" });
+  stat(s, 7.4, y0 + 0.95, 1.95, "100%", "of the heading near the target comes from fly neurons", RED, "rule-s", 26);
+  gloss(s, [["Connectome:", "the complete wiring diagram of a nervous system, every neuron and synapse"],
+    ["Flight neurons:", "neurons that carry flight commands from the brain to the wings"]]);
+  s.addNotes("What it does: camera image, fly eye model (FlyVis), the real fruit fly connectome (BANC v888, 175,401 neurons), " +
+    "the fly's flight neurons, the drone. Premises: only the official connectome, never trained, only a small linear readout " +
+    "is learned, and the most important decision, where to turn, is made by the fly's own descending neurons; drone sensors " +
+    "get zero weight on heading by construction. Why: a closed-loop test of whether a mapped brain can drive a body, which " +
+    "neurons carry the decision, and a direction for small vision-guided drones. An early synthetic network was thrown away.");
 }
+
 
 // 6. Pętla zamknięta: cały potok w 8 krokach na elipsie, z obrazkami (bez strzałek)
 {
@@ -620,7 +624,10 @@ pres.addSection({ title: "Next" });
   text(s, "THANK YOU", { x: 0.6, y: 2.12, w: 5.2, h: 0.8, fontSize: 36, fontFace: HEAD, charSpacing: 2, objectName: "thanks" });
   s.addImage({ path: A("accent_line.png"), x: 0.6, y: 2.95, w: 0.05, h: 0.8, objectName: "accent-line" });
   text(s, "A real fly brain chose the heading.\nLive demo: BANC panel in flight.", { x: 0.85, y: 2.98, w: 3.6, h: 0.75, fontSize: 15, color: T.lt2, objectName: "demo" });
-  text(s, "GITHUB.COM/FALCONDEVX/NEUROFLY", { x: 0.6, y: 4.6, w: 6, h: 0.3, fontSize: 9, color: RED, charSpacing: 4, objectName: "repo" });
+  eyebrow(s, "team", 0.6, 3.92, 4.5, RED, "team-label");
+  text(s, "THE ROOOK", { x: 0.6, y: 4.12, w: 6, h: 0.4, fontSize: 18, fontFace: HEAD, charSpacing: 2, objectName: "team-name" });
+  text(s, "Dawid Wypych      Mateusz Nowaczek      Krzysztof Mazur", { x: 0.6, y: 4.55, w: 8, h: 0.3, fontSize: 13, color: T.lt2, objectName: "team-members" });
+  text(s, "GITHUB.COM/FALCONDEVX/NEUROFLY", { x: 0.6, y: 5.0, w: 6, h: 0.3, fontSize: 9, color: RED, charSpacing: 4, objectName: "repo" });
 }
 
 // =================================================================================================

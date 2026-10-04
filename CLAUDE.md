@@ -177,7 +177,7 @@ Dane: `npm run dev` / `build` uruchamia `scripts/sync-data.mjs`, który kopiuje 
 
 ## Uwagi do repo
 
-- `docs/prezentacja/`: NeuroFly.pptx (28 slajdów, po angielsku, prostym językiem, styl plakatu: Michroma + Roboto, czerwony akcent). Kolejność: pomysł → „How it works” krok po kroku według 8 kroków pętli (slajd 4) → wyniki → szczerość → co dalej / podziękowanie → Appendix ze szczegółami (wzór, kalibracja, haltery, czujniki, luka lewego oka, nauczyciel, szybkość). Bez strzałek, kropek, punktorów i „·”; objaśnienia skrótów w kolumnach (`gloss`), na slajdzie 3 na górze. Slajd tytułowy: render `fly_drone` (muszka + szklany X2 z MuJoCo + nitki od neuronów lotu, nitki ilustracyjne). `render_assets.py` (.venv312) → `assets/` + `data.json`, `NODE_PATH=<pptxgenjs> node build.js` → .pptx, `embed_fonts.ps1` osadza fonty (zamyka PowerPointa!).
+- `docs/prezentacja/`: NeuroFly.pptx — LIMIT 10 SLAJDÓW (2026-10-04, wersja MVP: tytuł, co nas wyróżnia, pętla 8 kroków, mózg BANC, 99% DN, GPS daleko / BANC blisko, wynik w nowych światach, co nie działa, kto zyskuje, podziękowanie). Plik poprawiany ręcznie w PowerPoincie — NIE nadpisywać wynikiem `build.js`, który nadal generuje pełną wersję (28 slajdów, po angielsku, prostym językiem, styl plakatu: Michroma + Roboto, czerwony akcent). Kolejność: pomysł → „How it works” krok po kroku według 8 kroków pętli (slajd 4) → wyniki → szczerość → co dalej / podziękowanie → Appendix ze szczegółami (wzór, kalibracja, haltery, czujniki, luka lewego oka, nauczyciel, szybkość). Bez strzałek, kropek, punktorów i „·”; objaśnienia skrótów w kolumnach (`gloss`), na slajdzie 3 na górze. Slajd tytułowy: render `fly_drone` (muszka + szklany X2 z MuJoCo + nitki od neuronów lotu, nitki ilustracyjne). `render_assets.py` (.venv312) → `assets/` + `data.json`, `NODE_PATH=<pptxgenjs> node build.js` → .pptx, `embed_fonts.ps1` osadza fonty (zamyka PowerPointa!).
 
 - CI: `.github/workflows/tests.yml` — pytest (bez GPU/FlyVis/danych BANC, te testy się pomijają) i typy eksploratora.
 - Uruchamianie: torch z CUDA, potem `pip install -e .[all]` (extras: `vision`, `sim`, `dev`), `python scripts/download_banc.py`, `flyvis download-pretrained`, `pytest`.
@@ -186,6 +186,13 @@ Dane: `npm run dev` / `build` uruchamia `scripts/sync-data.mjs`, który kopiuje 
 - Lot do celu w świecie Osoby 3: `sim/banc_pilot.py` (BANC → thrust/roll/pitch/yaw, `WorldEnv` angle), trening
   `scripts/train_world.py` / `train_distributed.py --world` (master i workerzy muszą mieć ten sam tryb — inaczej
   master odrzuca), okno `python -m sim.run_env --banc <wagi>`. Założenia: czysty korytarz bez bloków, maszt ×4.
+- Omijanie bloków (2026-10-04, w toku): `--obstacles path` (train_world / train_distributed / run_env / banc_pilot)
+  zostawia `--path-blocks` (2) bloki na trasie; nauczyciel `teacher(avoid=True)` omija je z promieni MuJoCo
+  (zna geometrię — BANC nie; sam nauczyciel: 43/44 światów 101–150 do celu, 0 zderzeń; bez omijania 18/44, 27 zderzeń).
+  Daleko od celu yaw = GPS + `w_avoid`·BANC (wiersz 5 macierzy, uczony na „nauczyciel − GPS”, bez bloku ~0).
+  Ewaluacja na `EVAL_WORLDS_PATH` (blok na drodze), metryki `collided`, `block_hits`, `min_height`.
+  `--banc-axes thrust`: wysokość tylko z BANC (czujniki = 0). `*_stats.npz` po treningu = statystyki DAgger do przeliczenia wag.
+  Dotychczasowe wyniki lotu do celu (94/100) były na czystym korytarzu — dron NIE omijał przeszkód.
 - Lot w świecie: `sim/world_decoder.py` (`WorldDecoder`). yaw TYLKO z BANC (6 MN + DN lotu + wyraz wolny; czujniki mają
   wagę 0 z konstrukcji), thrust/roll/pitch z BANC + czujników drona (wysokość z dalmierza, v_z, prędkość przód/bok
   z przepływu optycznego, żyroskop) — NASZE ZAŁOŻENIE: BANC = percepcja i kierunek, czujniki = stabilizacja.

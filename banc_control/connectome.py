@@ -88,6 +88,16 @@ class Connectome:
     def group_indices(self, group: str) -> np.ndarray:
         return np.flatnonzero(self.groups == group)
 
+    def lesioned(self, prefixes) -> tuple[Connectome, np.ndarray]:
+        """Kopia z wyciętymi neuronami grup zaczynających się od ``prefixes`` (np. "dn_flight" = power + steering,
+        obie strony): ich wiersze i kolumny W = 0. Zwraca (connectome, indeksy wyciętych) — wejście zewnętrzne
+        do nich trzeba zerować osobno (``BancController(lesion=...)``). Pozostałe wagi bez renormalizacji."""
+        idx = np.flatnonzero(np.char.startswith(self.groups.astype(str), tuple(prefixes)))
+        keep = np.ones(self.n)
+        keep[idx] = 0.0
+        D = sp.diags(keep)
+        return Connectome(self.root_ids, self.cell_types, self.super_class, self.groups, (D @ self.W @ D).tocsr()), idx
+
     @classmethod
     def from_banc(cls, data_dir: str | Path = DEFAULT_DATA_DIR, min_count: int = 5) -> Connectome:
         """Wczytuje oficjalne pliki BANC v888 z ``data_dir``."""

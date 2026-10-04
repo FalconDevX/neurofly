@@ -23,11 +23,13 @@ class BancController:
         haltere_yaw_weight: float = 0.5,
         substeps: int = 4,
         readout: str = "mn",
+        lesion: np.ndarray | None = None,
         **dynamics_kw,
     ) -> None:
         """``readout``: "mn" — 6 średnich grup MN skrzydeł; "dn" — do tego każdy neuron DN lotu osobno
         (w średnich grup informacja o stronie celu się znosi, patrz ``scripts/check_side_decoding.py``)."""
         self.c = connectome
+        self.lesion = np.empty(0, dtype=np.int64) if lesion is None else np.asarray(lesion, dtype=np.int64)
         self.dyn = RateDynamics(connectome, **dynamics_kw)
         self.decoder = decoder or ManualDecoder()
         self.visual_gain = visual_gain
@@ -82,6 +84,7 @@ class BancController:
                      + self.haltere_yaw_weight * self.haltere_yaw_sign * yaw_rate)
             ext[self._haltere["haltere_aff_R"]] += self.haltere_gain * max(drive, 0.0)
             ext[self._haltere["haltere_aff_L"]] += self.haltere_gain * max(-drive, 0.0)
+        ext[self.lesion] = 0.0  # wycięte neurony (Connectome.lesioned) nie dostają też wejścia z zewnątrz
         return ext
 
     def motor_features(self) -> np.ndarray:

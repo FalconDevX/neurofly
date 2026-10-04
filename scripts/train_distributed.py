@@ -79,6 +79,8 @@ class Master:
                 from sim.world_decoder import WorldDecoder
 
                 self.M = WorldDecoder.load(args.init).to_matrix()
+                if getattr(args, "banc_axes", None):  # np. start z dekodera z czujnikami → wagi czujników 0
+                    self.M = WorldDecoder.for_matrix(self.M, banc_only=args.banc_axes).to_matrix()
         self.M0 = None
         self.next_episode = 0
         self.last_bearing = 0.0
@@ -167,6 +169,11 @@ class Master:
                        f"{'z' if mine else 'bez'} --world")
                 print(f"[{short_gpu(msg.get('gpu', '?'))}] ODRZUCONY (komputer {name}): {err}", flush=True)
                 return {"kind": "stop", "error": err}
+            if mine and world_mode(self.args) != msg.get("world_mode", world_mode(self.args)):
+                err = (f"inne ustawienia świata: master {world_mode(self.args)}, worker {msg.get('world_mode')} — "
+                       "--obstacles / --path-blocks / --banc-axes muszą być takie same")
+                print(f"[{short_gpu(msg.get('gpu', '?'))}] ODRZUCONY (komputer {name}): {err}", flush=True)
+                return {"kind": "stop", "error": err}
             self.pinged[name] = short_gpu(msg.get("gpu", "?"))
             print(f"[{self.label(name)}] zgłosił się (komputer {name}), {len(self.pinged)}/{self.needed}", flush=True)
             if self.finished:
@@ -204,7 +211,7 @@ class Master:
                 from sim.world_decoder import WorldDecoder
 
                 if self.wdec is None:
-                    self.wdec = WorldDecoder.for_matrix(self.M)
+                    self.wdec = WorldDecoder.for_matrix(self.M, banc_only=getattr(self.args, "banc_axes", None) or ())
                 self.wdec.merge(msg["stats"])
                 self.wdec.fit()
                 self.M = self.wdec.to_matrix()
@@ -218,7 +225,8 @@ class Master:
                     la = m.get("loss_axes") or {}
                     axes = "  ".join(f"{k} {v:.3f}" for k, v in la.items()) or f"loss {m['loss']:.4f}"
                     print(f"ep {m['index']:4d} [{who}]: świat {m['world']} → {m['outcome']:<12s} najbliżej "
-                          f"{m['min_dist']:4.1f} m  beta {m['beta']:.2f}  {axes}  "
+                          f"{m['min_dist']:4.1f} m  wys. {m.get('mean_height', float('nan')):.2f} m  "
+                          f"zderzenia {m.get('block_hits', 0)}  beta {m['beta']:.2f}  {axes}  "
                           f"({self.done_episodes}/{self.args.episodes})", flush=True)
                     continue
                 print(f"ep {m['index']:4d} [{who}]: cel {m['bearing']:+5.0f}° → {m['final_deg']:5.1f}°  "
@@ -263,10 +271,14 @@ class Master:
         if getattr(a, "world", False):  # plik WorldDecoder (sim.run_env --banc, sim.banc_pilot)
             from sim.world_decoder import WorldDecoder
 
-            WorldDecoder.for_matrix(self.M).save(out, **meta, samples=self.wdec.n if self.wdec else 0)
+            WorldDecoder.for_matrix(self.M, banc_only=getattr(a, "banc_axes", None) or ()).save(out, **meta,
+                                                                         samples=self.wdec.n if self.wdec else 0)
+            if self.wdec is not None:  # statystyki DAgger: wagi da się przeliczyć (np. z czujnikami w thrust) bez lotów
+                np.savez(out.with_name(out.stem + "_stats.npz"), **self.wdec.stats())
             if self.best is not None:  # końcowe wagi mogą być gorsze niż któraś walidacja w trakcie
                 best = out.with_name(out.stem + "_best.npz")
-                WorldDecoder.for_matrix(self.best["M"]).save(best, **meta, best_from=self.best["tag"])
+                WorldDecoder.for_matrix(self.best["M"], banc_only=getattr(a, "banc_axes", None) or ()).save(best, **meta,
+                                                                                    best_from=self.best["tag"])
                 print(f"najlepsze wagi ({self.best['tag']}: cel {self.best['reached']}, średnio najbliżej "
                       f"{self.best['mean_min_dist']:.1f} m) → {best}", flush=True)
         else:
@@ -320,7 +332,7 @@ def run_worker(args) -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     from sim.env import summarize
     from train_decoder import Runner, build, sweep_fit
-    from train_world import EVAL_WORLDS, TRAIN_SEED_OFFSET, default_yaw_init, setup
+    from train_world import TRAIN_SEED_OFFSET, default_yaw_init, eval_worlds, setup
 
     host = args.name or socket.gethostname()  # identyfikator u mastera
     import torch
@@ -356,7 +368,8 @@ def run_worker(args) -> None:
                      "(sprawdź adres, czy master działa i zaporę na porcie)")
 
     # zgłoszenie przed wczytaniem BANC: master od razu wie, czy ten komputer jest osiągalny
-    reply = send({"type": "ping", "name": host, "gpu": gpu, "world": args.world})
+    reply = send({"type": "ping", "name": host, "gpu": gpu, "world": args.world,
+                  "world_mode": world_mode(args) if args.world else None})
     if reply["kind"] == "stop":
         sys.exit(f"[{name}] master przerwał: {reply.get('error', '')}")
     print(f"[{name}] połączony z masterem {args.host}:{args.port}, ładuję BANC…", flush=True)
@@ -369,7 +382,8 @@ def run_worker(args) -> None:
         print(f"[{name}] yaw na start: {init or 'brak pliku — od zera (master weźmie wagi od innego workera)'}",
               flush=True)
         env, pilot, runner, calib = setup(init, args.beacon_scale, args.max_time, args.beacon_alpha,
-                                          args.sensors, args.motor_tau, args.vision_range, args.beacon_color)
+                                          args.sensors, args.motor_tau, args.vision_range, args.beacon_color,
+                                          args.obstacles, args.path_blocks, args.banc_axes)
         ctrl, dec = pilot.ctrl, pilot.ctrl.decoder
         wdec = pilot.world
     else:
@@ -405,7 +419,7 @@ def run_worker(args) -> None:
             dec.M = M.copy()
         if task["kind"] == "eval":
             print(f"[{name}] ewaluacja {task['tag']}…", flush=True)
-            ev = (runner.evaluate(EVAL_WORLDS, log=lambda m: print(f"[{name}]{m}", flush=True)) if args.world
+            ev = (runner.evaluate(eval_worlds(args.obstacles), log=lambda m: print(f"[{name}]{m}", flush=True)) if args.world
                   else runner.evaluate(args.eval_duration))
             task = send({"type": "result", "kind": "eval", "name": host, "tag": task["tag"], "eval": ev})
             continue
@@ -437,11 +451,20 @@ def run_worker(args) -> None:
 
 
 # --- wspólne --------------------------------------------------------------------------------------
+def world_mode(args) -> str:
+    """Ustawienia --world, które muszą się zgadzać między masterem a workerami."""
+    obstacles, n = getattr(args, "obstacles", "clear"), getattr(args, "path_blocks", 2)
+    return f"obstacles={obstacles}/{n} banc_axes={','.join(sorted(getattr(args, 'banc_axes', None) or [])) or '-'}"
+
+
 def show(tag: str, ev: dict) -> None:
     if "episodes" in ev:  # --world (jak sim.banc_pilot.show_world; master nie importuje MuJoCo)
         per = "  ".join(f"{e['world']}:{'CEL' if e['reached'] else e['outcome'].split(':')[0]}({e['min_dist']:.0f}m)"
                         for e in ev["episodes"])
-        print(f"{tag}: cel {ev['reached']}/{ev['n']}, średnio najbliżej {ev['mean_min_dist']:.1f} m  ({per})", flush=True)
+        extra = (f", zderzenia z blokami {ev['collided']}/{ev['n']}, wys. średnio {ev['mean_height']:.2f} m "
+                 f"(min {ev['min_height']:.2f})") if "collided" in ev else ""
+        print(f"{tag}: cel {ev['reached']}/{ev['n']}, średnio najbliżej {ev['mean_min_dist']:.1f} m{extra}  ({per})",
+              flush=True)
         return
     keys = [k for k in ev if k.startswith(("+", "-"))]
     per = "  ".join(f"{k}°→{ev[k]['final_deg']:.0f}°" for k in keys)
@@ -491,6 +514,9 @@ def main() -> None:
     ap.add_argument("--noise", type=float, default=0.1)
     ap.add_argument("--reward-lr", type=float, default=0.05)
     ap.add_argument("--thrust", choices=("banc", "hold"), default="hold")
+    from train_world import add_world_args
+
+    add_world_args(ap)
     args = ap.parse_args()
     run_master(args) if args.role == "master" else run_worker(args)
 
