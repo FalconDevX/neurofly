@@ -224,6 +224,9 @@ class BancPilot:
         self.world = None  # WorldDecoder: BANC → yaw, BANC + czujniki drona → thrust/roll/pitch
         if self.decoder_path and WorldDecoder.is_world_file(self.decoder_path):
             self.world = WorldDecoder.load(self.decoder_path)
+            if banc_axes:  # np. wagi uczone z czujnikami, puszczone bez nich (wagi czujników tych osi = 0)
+                self.world = WorldDecoder.for_matrix(self.world.to_matrix(),
+                                                     banc_only=tuple(set(self.world.banc_only) | set(banc_axes)))
             assist, readout = False, "dn"
         M = np.load(self.decoder_path)["M"] if self.decoder_path and self.world is None else None
         if readout is None:

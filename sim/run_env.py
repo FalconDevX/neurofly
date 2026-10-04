@@ -85,6 +85,8 @@ def main():
     parser.add_argument("--metrics-csv", type=Path, default=None, help="zapis podsumowań epizodów (M) do CSV")
     parser.add_argument("--motor-tau", type=float, default=None,
                         help="opóźnienie silników [s] (domyślnie 0.04 = realistycznie; z --banc 0, jak w treningu)")
+    parser.add_argument("--banc-axes", nargs="*", choices=("thrust", "roll", "pitch"), default=[],
+                        help="z --banc: te osie tylko z BANC (wagi czujników drona = 0), np. thrust roll pitch")
     parser.add_argument("--control", choices=("acro", "angle"), default="acro",
                         help="acro = Plan A (domyślnie), angle = Plan C (symulator trzyma poziom)")
     args = parser.parse_args()
@@ -95,7 +97,8 @@ def main():
         from sim.banc_pilot import BancPilot
 
         banc = policy = BancPilot(args.banc, args.banc_forward, beacon_scale=args.beacon_scale, beacon_alpha=args.beacon_alpha,
-                                  vision_range=args.vision_range, beacon_color=args.beacon_color)
+                                  vision_range=args.vision_range, beacon_color=args.beacon_color,
+                                  banc_axes=args.banc_axes)
         if not banc.assist:
             args.control = "angle"  # wagi z train_world.py: BANC daje przechył, symulator go utrzymuje
     sensors_mode = args.sensors or ("ideal" if args.banc else "real")
