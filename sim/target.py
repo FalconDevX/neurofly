@@ -42,5 +42,12 @@ class Target:
         return bool(np.all(np.abs(offset) <= half + DRONE_REACH))
 
     def show_reached(self, model, reached):
-        """Prostopadłościan robi się zielony, gdy dron go dotknął."""
-        model.geom_rgba[self.box_id] = REACHED_RGBA if reached else self.base_rgba
+        """Prostopadłościan robi się zielony, gdy dron go dotknął. Kolor sprzed zazielenienia jest zapamiętywany
+        w tej chwili, nie w __init__ — inaczej reset przywracał pomarańczowy ze sceny zamiast koloru z set_beacon."""
+        current = model.geom_rgba[self.box_id]
+        if reached:
+            if not np.allclose(current, REACHED_RGBA):
+                self.base_rgba = current.copy()
+            model.geom_rgba[self.box_id] = REACHED_RGBA
+        elif np.allclose(current, REACHED_RGBA):
+            model.geom_rgba[self.box_id] = self.base_rgba
