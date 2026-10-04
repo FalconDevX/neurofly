@@ -22,7 +22,8 @@ Klawisze (jak w sim.viewer):
                  nad dronem: pomarańczowa = odczyt GPS, zielona = prawdziwy kierunek do celu
     T            ślad lotu wł. / wył. (linia za dronem)
     M            panel metryk z prawdziwego stanu (--metrics-csv zapisuje podsumowania epizodów)
-    L            kamera za dronem / swobodna        kółko myszy   oddalanie / przybliżanie
+    L            kamera: za dronem → orbita (mysz obraca wokół lecącego drona) → swobodna
+                 kółko myszy   oddalanie / przybliżanie
 Koniec epizodu (cel, wywrotka, poza planszą, limit czasu) — wynik w konsoli i start od nowa w tym samym świecie.
 Autostabilizacja (Alt) to VelocityController (sim/control.py, prawdziwy stan z symulatora) — tylko do ręcznych
 testów; jej wynik też idzie do WorldEnv jako zwykła akcja. Model jej nie dostaje.
@@ -45,6 +46,9 @@ from sim.trail import Trail
 from sim.metrics import EpisodeMetrics
 from sim.viewer import (CHASE_DISTANCE, KEY_BACKSPACE, ZOOM_STEP, Overlays, draw_beacon_arrows, follow_drone,
                         set_camera_lock, update_panels)
+
+
+CAMERA_MODES = ("za dronem", "orbita wokół drona (przeciągnij myszą)", "swobodna")
 
 
 def keyboard_action(keyboard, env, stabilizer, stabilized):
@@ -122,8 +126,8 @@ def main():
     world = info["world_seed"]
     viewer = mujoco.viewer.launch_passive(env.model, env.data, key_callback=on_key,
                                           show_right_ui=banc is None)  # panel BANC przy prawej krawędzi
-    camera_locked = True
-    set_camera_lock(viewer, env.model, camera_locked)
+    camera_mode = 0  # CAMERA_MODES: 0 za dronem, 1 orbita wokół drona (mysz), 2 swobodna
+    set_camera_lock(viewer, env.model, True)
     viewer.cam.distance = CHASE_DISTANCE
     follow_drone(viewer, env.data, env.drone_id, snap=True)
     props = PropellerVisuals(env.model)
@@ -156,9 +160,10 @@ def main():
             stabilizer.z_ref = None  # trzyma wysokość z chwili włączenia
             print("autostabilizacja:", "WŁĄCZONA" if stabilized else "wyłączona (acro)")
         new_world = keyboard.take_new_world_requests() > 0
-        if keyboard.take_camera_toggles() % 2:
-            camera_locked = not camera_locked
-            set_camera_lock(viewer, env.model, camera_locked)
+        for _ in range(keyboard.take_camera_toggles()):
+            camera_mode = (camera_mode + 1) % len(CAMERA_MODES)
+            set_camera_lock(viewer, env.model, camera_mode < 2)  # orbita też śledzi drona, bez obrotu za kursem
+            print("kamera:", CAMERA_MODES[camera_mode])
         wheel = keyboard.take_wheel()
         if wheel:
             viewer.cam.distance = min(50.0, max(0.2, viewer.cam.distance * ZOOM_STEP ** -wheel))
@@ -192,7 +197,8 @@ def main():
             props.draw(viewer.user_scn, env.data)
             if show_sensors:
                 draw_beacon_arrows(viewer.user_scn, env.data, env.drone_id, env.sensors)
-            follow_drone(viewer, env.data, env.drone_id, env.dt)
+            if camera_mode == 0:
+                follow_drone(viewer, env.data, env.drone_id, env.dt)
         metrics.update(env.data, info["target"], info["wind"])
         total += reward
         steps += 1
